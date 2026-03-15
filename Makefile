@@ -22,20 +22,24 @@ help: ## Show this help
 
 .PHONY: infra.up infra.down infra.logs infra.ps infra.clean
 
-infra.up: ## Start infrastructure (postgres, minio, mlflow)
+infra.up: ## Start infrastructure (postgres, minio, mlflow) + monitoring (alloy, prometheus, grafana)
 	@docker network create ml-system_default 2>/dev/null || true
-	$(COMPOSE) up -d postgres minio minio-init mlflow
+	$(COMPOSE) up -d postgres minio minio-init mlflow prometheus alloy grafana
 	@echo "$(GREEN)Waiting for MLflow...$(RESET)"
 	@until curl -sf http://localhost:5000/health > /dev/null 2>&1; do sleep 2; done
+	@echo "$(GREEN)Waiting for Grafana...$(RESET)"
+	@until curl -sf http://localhost:3000/api/health > /dev/null 2>&1; do sleep 2; done
 	@echo "$(GREEN)Ready.$(RESET)"
-	@echo "  MLflow:  http://localhost:5000"
-	@echo "  MinIO:   http://localhost:9001"
+	@echo "  MLflow:     http://localhost:5000"
+	@echo "  MinIO:      http://localhost:9001"
+	@echo "  Prometheus: http://localhost:9090"
+	@echo "  Grafana:    http://localhost:3000  (admin/admin)"
 
 infra.down: ## Stop infrastructure
 	$(COMPOSE) down
 
 infra.logs: ## Tail infrastructure logs
-	$(COMPOSE) logs -f postgres minio mlflow
+	$(COMPOSE) logs -f postgres minio mlflow alloy prometheus grafana
 
 infra.ps: ## Show running services
 	$(COMPOSE) ps
@@ -61,7 +65,7 @@ train.local: ## Train model locally (devcontainer)
 # SERVING
 # ═══════════════════════════════════════════════════════════════
 
-.PHONY: serve serve.local serve.down serve.logs serve.test
+.PHONY: serve serve.local serve.down serve.logs serve.test serve.test.load
 
 serve: ## Start serving container
 	$(COMPOSE) up -d serving
@@ -77,6 +81,9 @@ serve.down: ## Stop serving
 
 serve.logs: ## Tail serving logs
 	$(COMPOSE) logs -f serving
+
+serve.test.load: ## Send requests at fixed rate (RATE=5 DURATION=60)
+	python3 scripts/load_test.py --rate $${RATE:-5} --duration $${DURATION:-60}
 
 serve.test: ## Smoke test against running serving
 	@echo "$(CYAN)Health:$(RESET)"

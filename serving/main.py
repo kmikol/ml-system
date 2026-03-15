@@ -4,6 +4,7 @@ FastAPI inference service. Loads ONNX from MLflow, serves predictions.
 Usage: uvicorn serving.main:app --host 0.0.0.0 --port 8000
 """
 
+import time
 import os
 import time
 import uuid
@@ -18,6 +19,7 @@ import onnxruntime as ort
 from scipy.special import softmax
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
+from prometheus_fastapi_instrumentator import Instrumentator
 
 from shared.config import require_env
 from shared.artifact_paths import (
@@ -39,6 +41,7 @@ MLFLOW_TRACKING_URI = require_env("MLFLOW_TRACKING_URI")
 MODEL_NAME = require_env("MODEL_NAME")
 MODEL_STAGE = require_env("MODEL_STAGE")
 POLL_INTERVAL = int(require_env("SERVING_MODEL_POLL_INTERVAL"))
+SIMULATED_LATENCY_S = int(require_env("SERVING_SIMULATED_LATENCY_MS")) / 1000.0
 REDIS_URL = require_env("REDIS_URL")
 REDIS_STREAM_NAME = require_env("REDIS_STREAM_NAME")
 
@@ -197,6 +200,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="ML System Serving", version="1.0.0", lifespan=lifespan)
+Instrumentator().instrument(app).expose(app)
 
 
 @app.post("/predict", response_model=PredictResponse)
@@ -210,6 +214,9 @@ async def predict(request: PredictRequest):
             status_code=422,
             content=ValidationErrorResponse(detail="Validation failed", errors=errors).model_dump(),
         )
+
+    if SIMULATED_LATENCY_S > 0:
+        await time.sleep(SIMULATED_LATENCY_S)
 
     features_array = np.array([[request.features[n] for n in FEATURE_NAMES]], dtype=np.float32)
     result = model_manager.predict(features_array)

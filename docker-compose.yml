@@ -1,0 +1,234 @@
+# ══════════════════════════════════════════════════════════════════
+# ML System — Docker Compose
+#
+# ALL values come from .env — never hardcode anything here.
+#
+# Active (Phase 1): postgres, minio, minio-init, mlflow, serving, training
+# Inactive: commented out, uncomment per phase.
+# ══════════════════════════════════════════════════════════════════
+
+services:
+
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  minio:
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - minio-data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  minio-init:
+    image: minio/mc
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD} &&
+      mc mb --ignore-existing local/mlflow-artifacts &&
+      mc mb --ignore-existing local/dvc-data &&
+      mc mb --ignore-existing local/argo-artifacts &&
+      echo 'Buckets ready.'
+      "
+    restart: "no"
+
+  mlflow:
+    build:
+      context: .
+      dockerfile: mlflow/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    command: >
+      mlflow server
+      --backend-store-uri ${MLFLOW_BACKEND_URI}
+      --default-artifact-root ${MLFLOW_ARTIFACT_ROOT}
+      --host 0.0.0.0
+      --port 5000
+    environment:
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      MLFLOW_S3_ENDPOINT_URL: ${MLFLOW_S3_ENDPOINT_URL}
+    ports:
+      - "5000:5000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  serving:
+    build:
+      context: .
+      dockerfile: serving/Dockerfile
+    depends_on:
+      mlflow:
+        condition: service_healthy
+    environment:
+      MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI}
+      MODEL_NAME: ${MODEL_NAME}
+      MODEL_STAGE: ${MODEL_STAGE}
+      SERVING_MODEL_POLL_INTERVAL: ${SERVING_MODEL_POLL_INTERVAL}
+      REDIS_URL: ${REDIS_URL}
+      REDIS_STREAM_NAME: ${REDIS_STREAM_NAME}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      MLFLOW_S3_ENDPOINT_URL: ${MLFLOW_S3_ENDPOINT_URL}
+    ports:
+      - "8000:8000"
+
+  training:
+    build:
+      context: .
+      dockerfile: training/Dockerfile
+    depends_on:
+      mlflow:
+        condition: service_healthy
+    environment:
+      MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI}
+      MODEL_NAME: ${MODEL_NAME}
+      TRAINING_MAX_EPOCHS: ${TRAINING_MAX_EPOCHS}
+      TRAINING_SEED: ${TRAINING_SEED}
+      TRAINING_BATCH_SIZE: ${TRAINING_BATCH_SIZE}
+      TRAINING_LR: ${TRAINING_LR}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      MLFLOW_S3_ENDPOINT_URL: ${MLFLOW_S3_ENDPOINT_URL}
+    profiles:
+      - training
+
+  # ════════════════════════════════════════════════════════════════
+  # PHASE 3 — Monitoring (uncomment when ready)
+  # ════════════════════════════════════════════════════════════════
+
+  # redis:
+  #   image: redis:7-alpine
+  #   command: redis-server --appendonly yes
+  #   volumes:
+  #     - redis-data:/data
+  #   ports:
+  #     - "6379:6379"
+  #   healthcheck:
+  #     test: ["CMD", "redis-cli", "ping"]
+  #     interval: 5s
+  #     timeout: 3s
+  #     retries: 5
+
+  # prometheus:
+  #   image: prom/prometheus:v2.50.0
+  #   volumes:
+  #     - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+  #     - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml
+  #     - prometheus-data:/prometheus
+  #   ports:
+  #     - "9090:9090"
+
+  # grafana:
+  #   image: grafana/grafana:10.3.0
+  #   depends_on:
+  #     - prometheus
+  #   volumes:
+  #     - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+  #     - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards
+  #     - grafana-data:/var/lib/grafana
+  #   environment:
+  #     GF_SECURITY_ADMIN_PASSWORD: admin
+  #   ports:
+  #     - "3000:3000"
+
+  # ════════════════════════════════════════════════════════════════
+  # PHASE 4 — Drift + Selection (uncomment when ready)
+  # ════════════════════════════════════════════════════════════════
+
+  # drift-detection:
+  #   build:
+  #     context: .
+  #     dockerfile: drift_detection/Dockerfile
+  #   depends_on:
+  #     - redis
+  #     - mlflow
+  #   environment:
+  #     REDIS_URL: ${REDIS_URL}
+  #     MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI}
+  #     MODEL_NAME: ${MODEL_NAME}
+  #     AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+  #     AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+  #     MLFLOW_S3_ENDPOINT_URL: ${MLFLOW_S3_ENDPOINT_URL}
+
+  # sample-selection:
+  #   build:
+  #     context: .
+  #     dockerfile: sample_selection/Dockerfile
+  #   depends_on:
+  #     - redis
+  #     - mlflow
+  #   environment:
+  #     REDIS_URL: ${REDIS_URL}
+  #     MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI}
+  #     MODEL_NAME: ${MODEL_NAME}
+  #     AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+  #     AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+  #     MLFLOW_S3_ENDPOINT_URL: ${MLFLOW_S3_ENDPOINT_URL}
+
+  # label-studio:
+  #   image: heartexlabs/label-studio:latest
+  #   ports:
+  #     - "8080:8080"
+  #   volumes:
+  #     - labelstudio-data:/label-studio/data
+
+  # ════════════════════════════════════════════════════════════════
+  # PHASE 5 — Feedback Loop (uncomment when ready)
+  # ════════════════════════════════════════════════════════════════
+
+  # controller:
+  #   build:
+  #     context: .
+  #     dockerfile: controller/Dockerfile
+  #   depends_on:
+  #     - prometheus
+  #     - mlflow
+  #   environment:
+  #     MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI}
+  #     MODEL_NAME: ${MODEL_NAME}
+  #     REDIS_URL: ${REDIS_URL}
+
+volumes:
+  postgres-data:
+  minio-data:
+  # redis-data:
+  # prometheus-data:
+  # grafana-data:
+  # labelstudio-data:
+
+networks:
+  default:
+    name: ${COMPOSE_NETWORK}
+    external: true

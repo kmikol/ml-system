@@ -1,0 +1,57 @@
+{
+    "name": "ML System Dev",
+    "build": {
+        "context": "..",
+        "dockerfile": "Dockerfile"
+    },
+
+    "workspaceFolder": "/workspace",
+    "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=cached",
+
+    "containerEnv": {
+        "PYTHONPATH": "/workspace",
+        "MLFLOW_TRACKING_URI": "http://mlflow:5000",
+        "MODEL_NAME": "ml_system_model",
+        "MODEL_STAGE": "Production",
+        "SERVING_MODEL_POLL_INTERVAL": "60",
+        "REDIS_URL": "redis://redis:6379",
+        "REDIS_STREAM_NAME": "inference_events",
+        "AWS_ACCESS_KEY_ID": "minioadmin",
+        "AWS_SECRET_ACCESS_KEY": "minioadmin",
+        "MLFLOW_S3_ENDPOINT_URL": "http://minio:9000",
+        "TRAINING_MAX_EPOCHS": "20",
+        "TRAINING_SEED": "42",
+        "TRAINING_BATCH_SIZE": "256",
+        "TRAINING_LR": "1e-3"
+    },
+
+    "initializeCommand": "docker network create ml-system_default 2>/dev/null || true",
+
+    "runArgs": [
+        "--network", "ml-system_default"
+    ],
+
+    "forwardPorts": [8000, 5000, 3000, 9090, 8080],
+
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-python.python",
+                "ms-python.vscode-pylance",
+                "charliermarsh.ruff",
+                "ms-azuretools.vscode-docker",
+                "redhat.vscode-yaml"
+            ],
+            "settings": {
+                "python.defaultInterpreterPath": "/usr/local/bin/python",
+                "python.analysis.extraPaths": ["/workspace"],
+                "[python]": {
+                    "editor.defaultFormatter": "charliermarsh.ruff"
+                }
+            }
+        }
+    },
+
+    "postCreateCommand": "echo 'Dev container ready. Run make infra.up in host terminal first.'",
+    "remoteUser": "root"
+}

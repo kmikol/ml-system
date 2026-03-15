@@ -1,0 +1,38 @@
+{{- if .Values.serving.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fastapi-serving
+  labels:
+    app: fastapi-serving
+spec:
+  replicas: {{ .Values.serving.replicas }}
+  selector:
+    matchLabels:
+      app: fastapi-serving
+  template:
+    metadata:
+      labels:
+        app: fastapi-serving
+    spec:
+      containers:
+        - name: serving
+          image: {{ .Values.serving.image }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          ports:
+            - containerPort: {{ .Values.serving.port }}
+          resources:
+            {{- toYaml .Values.serving.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fastapi-serving
+spec:
+  type: {{ .Values.serving.service.type | default "ClusterIP" }}
+  ports:
+    - port: {{ .Values.serving.port }}
+      targetPort: {{ .Values.serving.port }}
+  selector:
+    app: fastapi-serving
+{{- end }}

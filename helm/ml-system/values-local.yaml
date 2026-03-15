@@ -1,0 +1,9 @@
+global:
+  imagePullPolicy: Never
+minio:
+  enabled: true
+serving:
+  replicas: 1
+  service:
+    type: NodePort
+    nodePort: 30000

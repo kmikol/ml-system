@@ -1,0 +1,42 @@
+global:
+  namespace: ml-system
+  imageRegistry: ""
+  imagePullPolicy: IfNotPresent
+
+serving:
+  enabled: true
+  replicas: 1
+  image: ml-system-serving:latest
+  port: 8000
+  resources:
+    requests: { memory: "512Mi", cpu: "500m" }
+    limits: { memory: "1Gi", cpu: "1000m" }
+
+mlflow:
+  enabled: true
+  image: ml-system-mlflow:latest
+  port: 5000
+  artifactRoot: "s3://mlflow-artifacts/"
+
+postgres:
+  enabled: true
+  image: postgres:15
+  persistence: { size: 5Gi }
+
+minio:
+  enabled: true
+  image: minio/minio
+  persistence: { size: 10Gi }
+
+redis:
+  enabled: false
+prometheus:
+  enabled: false
+grafana:
+  enabled: false
+driftDetection:
+  enabled: false
+sampleSelection:
+  enabled: false
+controller:
+  enabled: false

@@ -1,9 +1,40 @@
 global:
+  # Never pull from registry — use images imported via `make k3d.import`.
+  # Only applies to custom-built images (serving, mlflow).
+  # Public images (postgres, minio, grafana, prometheus, alloy) always use IfNotPresent.
   imagePullPolicy: Never
-minio:
-  enabled: true
+
 serving:
   replicas: 1
   service:
     type: NodePort
     nodePort: 30000
+  env:
+    MLFLOW_TRACKING_URI: "http://mlflow:5000"
+    MLFLOW_S3_ENDPOINT_URL: "http://minio:9000"
+    AWS_ACCESS_KEY_ID: "minioadmin"
+    AWS_SECRET_ACCESS_KEY: "minioadmin"
+    MODEL_NAME: "ml_system_model"
+    MODEL_STAGE: "Production"
+    SERVING_MODEL_POLL_INTERVAL: "60"
+    SERVING_SIMULATED_LATENCY_MS: "333"
+
+mlflow:
+  service:
+    type: NodePort
+    nodePort: 30001
+
+grafana:
+  service:
+    type: NodePort
+    nodePort: 30002
+
+prometheus:
+  service:
+    type: NodePort
+    nodePort: 30003
+
+minio:
+  service:
+    type: NodePort
+    consoleNodePort: 30004

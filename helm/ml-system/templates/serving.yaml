@@ -3,10 +3,13 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: fastapi-serving
+  namespace: {{ .Values.global.namespace }}
   labels:
     app: fastapi-serving
 spec:
+  {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.serving.replicas }}
+  {{- end }}
   selector:
     matchLabels:
       app: fastapi-serving
@@ -15,12 +18,31 @@ spec:
       labels:
         app: fastapi-serving
     spec:
+      initContainers:
+        # Block until MLflow is accepting requests.
+        - name: wait-for-mlflow
+          image: busybox
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - |
+              until wget -q -O- http://mlflow:{{ .Values.mlflow.port }}/health; do
+                echo "waiting for mlflow..."; sleep 5
+              done
       containers:
         - name: serving
           image: {{ .Values.serving.image }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
           ports:
             - containerPort: {{ .Values.serving.port }}
+          {{- if .Values.serving.env }}
+          env:
+            {{- range $key, $val := .Values.serving.env }}
+            - name: {{ $key }}
+              value: {{ $val | quote }}
+            {{- end }}
+          {{- end }}
           resources:
             {{- toYaml .Values.serving.resources | nindent 12 }}
 ---
@@ -28,11 +50,15 @@ apiVersion: v1
 kind: Service
 metadata:
   name: fastapi-serving
+  namespace: {{ .Values.global.namespace }}
 spec:
   type: {{ .Values.serving.service.type | default "ClusterIP" }}
   ports:
     - port: {{ .Values.serving.port }}
       targetPort: {{ .Values.serving.port }}
+      {{- if .Values.serving.service.nodePort }}
+      nodePort: {{ .Values.serving.service.nodePort }}
+      {{- end }}
   selector:
     app: fastapi-serving
 {{- end }}

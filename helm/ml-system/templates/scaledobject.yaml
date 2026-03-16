@@ -1,0 +1,42 @@
+{{- if .Values.autoscaling.enabled }}
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: fastapi-serving-scaler
+  namespace: {{ .Values.global.namespace }}
+spec:
+  scaleTargetRef:
+    name: fastapi-serving
+  minReplicaCount: {{ .Values.autoscaling.minReplicas }}
+  maxReplicaCount: {{ .Values.autoscaling.maxReplicas }}
+  # How often KEDA queries the metric. Keep short so scaling reacts quickly.
+  pollingInterval: {{ .Values.autoscaling.pollingIntervalSeconds }}
+  # cooldownPeriod only applies when minReplicas: 0 (scale to zero).
+  cooldownPeriod: {{ .Values.autoscaling.cooldownPeriod }}
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleUp:
+          # React immediately — don't wait for multiple samples before scaling up.
+          stabilizationWindowSeconds: 0
+          policies:
+            - type: Pods
+              value: 4
+              periodSeconds: 15
+        scaleDown:
+          stabilizationWindowSeconds: {{ .Values.autoscaling.scaleDownStabilizationSeconds }}
+          policies:
+            - type: Pods
+              value: 1
+              periodSeconds: 15
+  triggers:
+    - type: prometheus
+      metadata:
+        serverAddress: http://prometheus.{{ .Values.global.namespace }}.svc.cluster.local:{{ .Values.prometheus.port }}
+        metricName: predict_arrivals_per_second
+        # Arrival rate — counted before the semaphore so this reflects true
+        # incoming load, not just throughput. KEDA computes:
+        #   desiredReplicas = ceil(queryResult / threshold)
+        query: sum(rate(predict_arrivals_total[1m]))
+        threshold: {{ .Values.autoscaling.targetRPS | quote }}
+{{- end }}

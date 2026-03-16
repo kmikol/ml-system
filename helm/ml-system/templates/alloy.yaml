@@ -1,0 +1,118 @@
+{{- if .Values.alloy.enabled }}
+# ── RBAC ─────────────────────────────────────────────────────────────────────
+# Alloy needs to query the k8s API to discover pod IPs for per-pod scraping.
+# Without this it can only hit the Service VIP (one random pod per scrape).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: alloy
+  namespace: {{ .Values.global.namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: alloy-pod-reader
+  namespace: {{ .Values.global.namespace }}
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "endpoints", "services"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: alloy-pod-reader
+  namespace: {{ .Values.global.namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: alloy-pod-reader
+subjects:
+  - kind: ServiceAccount
+    name: alloy
+    namespace: {{ .Values.global.namespace }}
+---
+# ── Config ───────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alloy-config
+  namespace: {{ .Values.global.namespace }}
+data:
+  config.alloy: |
+    // Discover all fastapi-serving pods individually.
+    // This ensures every replica is scraped on every interval — no counter
+    // discontinuities from the Service round-robin hitting different pods.
+    discovery.kubernetes "serving_pods" {
+      role = "pod"
+      namespaces {
+        names = [{{ .Values.global.namespace | quote }}]
+      }
+      selectors {
+        role  = "pod"
+        label = "app=fastapi-serving"
+      }
+    }
+
+    // Rewrite the scrape address from pod IP to pod_ip:port.
+    discovery.relabel "serving_pods" {
+      targets = discovery.kubernetes.serving_pods.targets
+      rule {
+        source_labels = ["__meta_kubernetes_pod_ip"]
+        replacement   = "$1:{{ .Values.serving.port }}"
+        target_label  = "__address__"
+      }
+      // Preserve the pod name as a label so per-pod metrics are distinguishable.
+      rule {
+        source_labels = ["__meta_kubernetes_pod_name"]
+        target_label  = "pod"
+      }
+    }
+
+    prometheus.scrape "serving" {
+      targets         = discovery.relabel.serving_pods.output
+      scrape_interval = "10s"
+      metrics_path    = "/metrics"
+      forward_to      = [prometheus.remote_write.local.receiver]
+    }
+
+    prometheus.remote_write "local" {
+      endpoint {
+        url = "http://prometheus.{{ .Values.global.namespace }}.svc.cluster.local:{{ .Values.prometheus.port }}/api/v1/write"
+      }
+    }
+---
+# ── Deployment ───────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alloy
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: alloy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alloy
+  template:
+    metadata:
+      labels:
+        app: alloy
+    spec:
+      serviceAccountName: alloy
+      containers:
+        - name: alloy
+          image: {{ .Values.alloy.image }}
+          imagePullPolicy: IfNotPresent
+          args: ["run", "/etc/alloy/config.alloy"]
+          ports:
+            - containerPort: 12345
+          volumeMounts:
+            - name: config
+              mountPath: /etc/alloy
+      volumes:
+        - name: config
+          configMap:
+            name: alloy-config
+{{- end }}

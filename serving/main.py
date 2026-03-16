@@ -4,9 +4,9 @@ FastAPI inference service. Loads ONNX from MLflow, serves predictions.
 Usage: uvicorn serving.main:app --host 0.0.0.0 --port 8000
 """
 
+import asyncio
 import time
 import os
-import time
 import uuid
 import logging
 import threading
@@ -19,6 +19,7 @@ import onnxruntime as ort
 from scipy.special import softmax
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
+from prometheus_client import Counter
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from shared.config import require_env
@@ -42,8 +43,17 @@ MODEL_NAME = require_env("MODEL_NAME")
 MODEL_STAGE = require_env("MODEL_STAGE")
 POLL_INTERVAL = int(require_env("SERVING_MODEL_POLL_INTERVAL"))
 SIMULATED_LATENCY_S = int(require_env("SERVING_SIMULATED_LATENCY_MS")) / 1000.0
-REDIS_URL = require_env("REDIS_URL")
-REDIS_STREAM_NAME = require_env("REDIS_STREAM_NAME")
+# Semaphore caps concurrency to 1. At 333ms service time this saturates at ~3 RPS.
+# Requests beyond capacity queue here — latency grows linearly with queue depth.
+_concurrency = asyncio.Semaphore(1)
+
+# Arrival counter — incremented before the semaphore so KEDA sees true request
+# rate, not throughput. http_requests_total only counts completions and would
+# show ~3 RPS regardless of load, preventing scale-out.
+_predict_arrivals = Counter("predict_arrivals_total", "Predict requests at arrival")
+
+REDIS_URL = os.getenv("REDIS_URL", "")
+REDIS_STREAM_NAME = os.getenv("REDIS_STREAM_NAME", "inference_events")
 
 
 class ModelManager:
@@ -208,6 +218,8 @@ async def predict(request: PredictRequest):
     if not model_manager.is_ready:
         raise HTTPException(status_code=503, detail="Model not loaded")
 
+    _predict_arrivals.inc()
+
     errors = validate_features(request.features)
     if errors:
         return JSONResponse(
@@ -216,7 +228,8 @@ async def predict(request: PredictRequest):
         )
 
     if SIMULATED_LATENCY_S > 0:
-        await time.sleep(SIMULATED_LATENCY_S)
+        async with _concurrency:
+            await asyncio.sleep(SIMULATED_LATENCY_S)
 
     features_array = np.array([[request.features[n] for n in FEATURE_NAMES]], dtype=np.float32)
     result = model_manager.predict(features_array)

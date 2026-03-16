@@ -8,6 +8,9 @@ serving:
   replicas: 1
   image: ml-system-serving:latest
   port: 8000
+  env: {}
+  service:
+    type: ClusterIP
   resources:
     requests: { memory: "512Mi", cpu: "500m" }
     limits: { memory: "1Gi", cpu: "1000m" }
@@ -16,23 +19,60 @@ mlflow:
   enabled: true
   image: ml-system-mlflow:latest
   port: 5000
+  backendUri: "postgresql://mlflow:mlflow@postgres:5432/mlflow"
   artifactRoot: "s3://mlflow-artifacts/"
+  s3EndpointUrl: "http://minio:9000"
+  service:
+    type: ClusterIP
 
 postgres:
   enabled: true
   image: postgres:15
-  persistence: { size: 5Gi }
+  db: mlflow
+  user: mlflow
+  persistence:
+    size: 5Gi
 
 minio:
   enabled: true
   image: minio/minio
-  persistence: { size: 10Gi }
+  mcImage: minio/mc
+  persistence:
+    size: 10Gi
+
+prometheus:
+  enabled: true
+  image: prom/prometheus:v2.50.0
+  port: 9090
+  persistence:
+    size: 5Gi
+  service:
+    type: ClusterIP
+
+grafana:
+  enabled: true
+  image: grafana/grafana:10.3.0
+  port: 3000
+  adminPassword: admin
+  persistence:
+    size: 1Gi
+  service:
+    type: ClusterIP
+
+alloy:
+  enabled: true
+  image: grafana/alloy:latest
+
+autoscaling:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 10
+  targetRPS: 3
+  pollingIntervalSeconds: 10
+  cooldownPeriod: 30
+  scaleDownStabilizationSeconds: 60
 
 redis:
-  enabled: false
-prometheus:
-  enabled: false
-grafana:
   enabled: false
 driftDetection:
   enabled: false

@@ -98,6 +98,7 @@ services:
       SERVING_MODEL_POLL_INTERVAL: ${SERVING_MODEL_POLL_INTERVAL}
       REDIS_URL: ${REDIS_URL}
       REDIS_STREAM_NAME: ${REDIS_STREAM_NAME}
+      SERVING_SIMULATED_LATENCY_MS: ${SERVING_SIMULATED_LATENCY_MS}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
       MLFLOW_S3_ENDPOINT_URL: ${MLFLOW_S3_ENDPOINT_URL}
@@ -125,7 +126,7 @@ services:
       - training
 
   # ════════════════════════════════════════════════════════════════
-  # PHASE 3 — Monitoring (uncomment when ready)
+  # PHASE 3 — Monitoring
   # ════════════════════════════════════════════════════════════════
 
   # redis:
@@ -141,27 +142,46 @@ services:
   #     timeout: 3s
   #     retries: 5
 
-  # prometheus:
-  #   image: prom/prometheus:v2.50.0
-  #   volumes:
-  #     - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
-  #     - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml
-  #     - prometheus-data:/prometheus
-  #   ports:
-  #     - "9090:9090"
+  alloy:
+    image: grafana/alloy:latest
+    volumes:
+      - ./monitoring/alloy/config.alloy:/etc/alloy/config.alloy
+    command: run /etc/alloy/config.alloy
+    depends_on:
+      - prometheus
+    ports:
+      - "12345:12345"
 
-  # grafana:
-  #   image: grafana/grafana:10.3.0
-  #   depends_on:
-  #     - prometheus
-  #   volumes:
-  #     - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
-  #     - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards
-  #     - grafana-data:/var/lib/grafana
-  #   environment:
-  #     GF_SECURITY_ADMIN_PASSWORD: admin
-  #   ports:
-  #     - "3000:3000"
+  prometheus:
+    image: prom/prometheus:v2.50.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-remote-write-receiver
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+
+  grafana:
+    image: grafana/grafana:10.3.0
+    depends_on:
+      - prometheus
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards
+      - grafana-data:/var/lib/grafana
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   # ════════════════════════════════════════════════════════════════
   # PHASE 4 — Drift + Selection (uncomment when ready)
@@ -223,9 +243,9 @@ services:
 volumes:
   postgres-data:
   minio-data:
+  prometheus-data:
+  grafana-data:
   # redis-data:
-  # prometheus-data:
-  # grafana-data:
   # labelstudio-data:
 
 networks:

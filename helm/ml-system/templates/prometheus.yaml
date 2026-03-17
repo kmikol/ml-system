@@ -7,8 +7,8 @@ metadata:
 data:
   prometheus.yml: |
     global:
-      scrape_interval: 15s
-      evaluation_interval: 15s
+      scrape_interval: {{ .Values.prometheus.scrapeIntervalSeconds }}s
+      evaluation_interval: {{ .Values.prometheus.evaluationIntervalSeconds }}s
 
     # No scrape jobs here — Alloy handles collection and remote-writes metrics in.
     # Prometheus runs with --web.enable-remote-write-receiver.

@@ -210,7 +210,10 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="ML System Serving", version="1.0.0", lifespan=lifespan)
-Instrumentator().instrument(app).expose(app)
+Instrumentator().instrument(
+    app,
+    latency_lowr_buckets=[0.05, 0.1, 0.2, 0.3, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 5.0],
+).expose(app)
 
 
 @app.post("/predict", response_model=PredictResponse)

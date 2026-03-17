@@ -71,7 +71,7 @@ data:
 
     prometheus.scrape "serving" {
       targets         = discovery.relabel.serving_pods.output
-      scrape_interval = "10s"
+      scrape_interval = "{{ .Values.alloy.scrapeIntervalSeconds }}s"
       metrics_path    = "/metrics"
       forward_to      = [prometheus.remote_write.local.receiver]
     }

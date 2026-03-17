@@ -48,6 +48,8 @@ prometheus:
     size: 5Gi
   service:
     type: ClusterIP
+  scrapeIntervalSeconds: 15
+  evaluationIntervalSeconds: 15
 
 grafana:
   enabled: true
@@ -62,15 +64,27 @@ grafana:
 alloy:
   enabled: true
   image: grafana/alloy:latest
+  scrapeIntervalSeconds: 15
 
 autoscaling:
   enabled: true
   minReplicas: 1
   maxReplicas: 10
-  targetRPS: 3
+  # Target RPS per replica — KEDA scales to ceil(total_rps / targetRPS) pods.
+  # Should match the simulated per-pod throughput cap in serving.
+  targetRPS: 5
+  # Window for rate() in the Prometheus query. Should be >= 2x scrape interval.
+  rateWindow: "30s"
+  # How often KEDA queries the metric.
   pollingIntervalSeconds: 10
   cooldownPeriod: 30
+  # Scale-up: add up to scaleUpPercent% of current replicas every scaleUpPeriodSeconds.
+  # 100% means: 1→2, 2→4, 4→8 — doubles each period. Relative, not hardcoded.
+  scaleUpPercent: 100
+  scaleUpPeriodSeconds: 15
+  # Scale-down: remove 1 pod every scaleDownPeriodSeconds after stabilization window.
   scaleDownStabilizationSeconds: 60
+  scaleDownPeriodSeconds: 15
 
 redis:
   enabled: false

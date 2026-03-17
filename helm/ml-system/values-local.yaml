@@ -17,7 +17,7 @@ serving:
     MODEL_NAME: "ml_system_model"
     MODEL_STAGE: "Production"
     SERVING_MODEL_POLL_INTERVAL: "60"
-    SERVING_SIMULATED_LATENCY_MS: "333"
+    SERVING_SIMULATED_LATENCY_MS: "100"
 
 mlflow:
   service:

@@ -284,8 +284,9 @@ serve.test: ## Smoke test against running serving (works with compose or k3d)
 		-d '{"features": {"age": 35, "income": 55000, "credit_score": 720, "debt_ratio": 1.2, "num_accounts": 5}}' \
 		| python3 -m json.tool
 
-serve.test.load: ## Send requests at fixed rate (RATE=5 DURATION=60)
-	python3 scripts/load_test.py --rate $${RATE:-5} --duration $${DURATION:-60}
+serve.test.load: ## Send requests with ramp-up/down (RATE=5 DURATION=60 RAMP_UP=0 RAMP_DOWN=0)
+	python3 scripts/load_test.py --rate $${RATE:-5} --duration $${DURATION:-60} \
+		--ramp-up $${RAMP_UP:-0} --ramp-down $${RAMP_DOWN:-0}
 
 mlflow.debug: ## Inspect MLflow artifacts and test ONNX loading
 	PYTHONPATH=. python debug_mlflow.py

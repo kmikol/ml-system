@@ -2,7 +2,7 @@
   "title": "ML System — Serving",
   "uid": "ml-system-serving",
   "schemaVersion": 38,
-  "version": 1,
+  "version": 2,
   "refresh": "10s",
   "time": { "from": "now-15m", "to": "now" },
   "panels": [
@@ -20,24 +20,34 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate(predict_arrivals_total[1m]))",
+          "legendFormat": "arrival rate"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
           "expr": "sum(rate(http_requests_total{handler=\"/predict\"}[1m]))",
-          "legendFormat": "predict req/s"
+          "legendFormat": "completion rate"
         }
       ],
       "options": {
         "legend": { "displayMode": "list", "placement": "bottom" },
-        "tooltip": { "mode": "single" }
+        "tooltip": { "mode": "multi" }
       }
     },
     {
       "id": 2,
       "type": "timeseries",
-      "title": "Latency Distribution — /predict (p50 / p95 / p99)",
+      "title": "Latency Percentiles — /predict",
       "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
       "fieldConfig": {
         "defaults": {
           "unit": "s",
-          "color": { "mode": "palette-classic" }
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisPlacement": "auto",
+            "scaleDistribution": { "type": "linear" }
+          },
+          "max": 5
         }
       },
       "targets": [
@@ -106,7 +116,7 @@
             "mode": "absolute",
             "steps": [
               { "color": "green", "value": null },
-              { "color": "yellow", "value": 0.1 },
+              { "color": "yellow", "value": 0.15 },
               { "color": "red", "value": 0.5 }
             ]
           }
@@ -127,23 +137,34 @@
       }
     },
     {
-      "id": 5,
-      "type": "heatmap",
-      "title": "Latency Heatmap — /predict",
-      "gridPos": { "x": 0, "y": 12, "w": 24, "h": 8 },
-      "fieldConfig": { "defaults": { "unit": "s" } },
+      "id": 6,
+      "type": "stat",
+      "title": "Active Serving Pods",
+      "gridPos": { "x": 12, "y": 8, "w": 6, "h": 4 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "blue", "value": null }
+            ]
+          }
+        }
+      },
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(rate(http_request_duration_seconds_bucket{handler=\"/predict\"}[1m])) by (le)",
-          "legendFormat": "{{le}}",
-          "format": "heatmap"
+          "expr": "count(predict_arrivals_total)",
+          "legendFormat": ""
         }
       ],
       "options": {
-        "calculate": false,
-        "yAxis": { "unit": "s" },
-        "color": { "mode": "scheme", "scheme": "Spectral" }
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "background"
       }
     }
   ]

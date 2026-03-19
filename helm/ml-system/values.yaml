@@ -8,6 +8,9 @@ serving:
   replicas: 1
   image: ml-system-serving:latest
   port: 8000
+  env: {}
+  service:
+    type: ClusterIP
   resources:
     requests: { memory: "512Mi", cpu: "500m" }
     limits: { memory: "1Gi", cpu: "1000m" }
@@ -16,23 +19,74 @@ mlflow:
   enabled: true
   image: ml-system-mlflow:latest
   port: 5000
+  backendUri: "postgresql://mlflow:mlflow@postgres:5432/mlflow"
   artifactRoot: "s3://mlflow-artifacts/"
+  s3EndpointUrl: "http://minio:9000"
+  service:
+    type: ClusterIP
 
 postgres:
   enabled: true
   image: postgres:15
-  persistence: { size: 5Gi }
+  db: mlflow
+  user: mlflow
+  persistence:
+    size: 5Gi
 
 minio:
   enabled: true
   image: minio/minio
-  persistence: { size: 10Gi }
+  mcImage: minio/mc
+  persistence:
+    size: 10Gi
+
+prometheus:
+  enabled: true
+  image: prom/prometheus:v2.50.0
+  port: 9090
+  persistence:
+    size: 5Gi
+  service:
+    type: ClusterIP
+  scrapeIntervalSeconds: 15
+  evaluationIntervalSeconds: 15
+
+grafana:
+  enabled: true
+  image: grafana/grafana:10.3.0
+  port: 3000
+  adminPassword: admin
+  persistence:
+    size: 1Gi
+  service:
+    type: ClusterIP
+
+alloy:
+  enabled: true
+  image: grafana/alloy:latest
+  scrapeIntervalSeconds: 15
+
+autoscaling:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 10
+  # Target RPS per replica — KEDA scales to ceil(total_rps / targetRPS) pods.
+  # Should match the simulated per-pod throughput cap in serving.
+  targetRPS: 5
+  # Window for rate() in the Prometheus query. Should be >= 2x scrape interval.
+  rateWindow: "30s"
+  # How often KEDA queries the metric.
+  pollingIntervalSeconds: 10
+  cooldownPeriod: 30
+  # Scale-up: add up to scaleUpPercent% of current replicas every scaleUpPeriodSeconds.
+  # 100% means: 1→2, 2→4, 4→8 — doubles each period. Relative, not hardcoded.
+  scaleUpPercent: 100
+  scaleUpPeriodSeconds: 15
+  # Scale-down: remove 1 pod every scaleDownPeriodSeconds after stabilization window.
+  scaleDownStabilizationSeconds: 60
+  scaleDownPeriodSeconds: 15
 
 redis:
-  enabled: false
-prometheus:
-  enabled: false
-grafana:
   enabled: false
 driftDetection:
   enabled: false

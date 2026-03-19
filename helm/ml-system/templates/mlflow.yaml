@@ -1,0 +1,95 @@
+{{- if .Values.mlflow.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mlflow
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: mlflow
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mlflow
+  template:
+    metadata:
+      labels:
+        app: mlflow
+    spec:
+      initContainers:
+        # Block until postgres accepts connections.
+        - name: wait-for-postgres
+          image: postgres:15
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - |
+              until pg_isready -h postgres -U {{ .Values.postgres.user }}; do
+                echo "waiting for postgres..."; sleep 3
+              done
+        # Block until minio is healthy (buckets created by minio-init Job).
+        - name: wait-for-minio
+          image: busybox
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - |
+              until wget -q -O- http://minio:9000/minio/health/ready; do
+                echo "waiting for minio..."; sleep 3
+              done
+      containers:
+        - name: mlflow
+          image: {{ .Values.mlflow.image }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          command:
+            - mlflow
+            - server
+            - --backend-store-uri
+            - {{ .Values.mlflow.backendUri }}
+            - --default-artifact-root
+            - {{ .Values.mlflow.artifactRoot }}
+            - --host
+            - "0.0.0.0"
+            - --port
+            - {{ .Values.mlflow.port | quote }}
+          env:
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: ml-system-secrets
+                  key: minio-access-key
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ml-system-secrets
+                  key: minio-secret-key
+            - name: MLFLOW_S3_ENDPOINT_URL
+              value: {{ .Values.mlflow.s3EndpointUrl }}
+          ports:
+            - containerPort: {{ .Values.mlflow.port }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.mlflow.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 12
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mlflow
+  namespace: {{ .Values.global.namespace }}
+spec:
+  type: {{ .Values.mlflow.service.type | default "ClusterIP" }}
+  ports:
+    - port: {{ .Values.mlflow.port }}
+      targetPort: {{ .Values.mlflow.port }}
+      {{- if .Values.mlflow.service.nodePort }}
+      nodePort: {{ .Values.mlflow.service.nodePort }}
+      {{- end }}
+  selector:
+    app: mlflow
+{{- end }}

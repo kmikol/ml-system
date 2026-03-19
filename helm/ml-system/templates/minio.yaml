@@ -1,0 +1,137 @@
+{{- if .Values.minio.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: minio-data
+  namespace: {{ .Values.global.namespace }}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: {{ .Values.minio.persistence.size }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: minio
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: minio
+  template:
+    metadata:
+      labels:
+        app: minio
+    spec:
+      containers:
+        - name: minio
+          image: {{ .Values.minio.image }}
+          imagePullPolicy: IfNotPresent
+          args: ["server", "/data", "--console-address", ":9001"]
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: ml-system-secrets
+                  key: minio-access-key
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ml-system-secrets
+                  key: minio-secret-key
+          ports:
+            - containerPort: 9000
+              name: api
+            - containerPort: 9001
+              name: console
+          readinessProbe:
+            httpGet:
+              path: /minio/health/ready
+              port: 9000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 12
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: minio-data
+---
+# Job to create required buckets on first start.
+# Uses --ignore-existing so it is safe to re-run.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: minio-init
+  namespace: {{ .Values.global.namespace }}
+  annotations:
+    # Re-runs on every helm upgrade via a unique name suffix.
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      initContainers:
+        - name: wait-for-minio
+          image: busybox
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - |
+              until wget -q -O- http://minio:9000/minio/health/ready; do
+                echo "waiting for minio..."; sleep 3
+              done
+      containers:
+        - name: mc
+          image: {{ .Values.minio.mcImage }}
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: ml-system-secrets
+                  key: minio-access-key
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ml-system-secrets
+                  key: minio-secret-key
+          command:
+            - sh
+            - -c
+            - |
+              mc alias set local http://minio:9000 $MINIO_ROOT_USER $MINIO_ROOT_PASSWORD
+              mc mb --ignore-existing local/mlflow-artifacts
+              mc mb --ignore-existing local/dvc-data
+              mc mb --ignore-existing local/argo-artifacts
+              echo "Buckets ready."
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+  namespace: {{ .Values.global.namespace }}
+spec:
+  type: {{ .Values.minio.service.type | default "ClusterIP" }}
+  ports:
+    - port: 9000
+      targetPort: 9000
+      name: api
+    - port: 9001
+      targetPort: 9001
+      name: console
+      {{- if .Values.minio.service.consoleNodePort }}
+      nodePort: {{ .Values.minio.service.consoleNodePort }}
+      {{- end }}
+  selector:
+    app: minio
+{{- end }}

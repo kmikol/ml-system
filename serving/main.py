@@ -23,6 +23,7 @@ from prometheus_client import Counter
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from shared.config import require_env
+from shared.model_artifact_controller import MLflowModelArtifactController, ModelArtifactError
 from shared.artifact_paths import (
     MLFLOW_PATH_ONNX_ROOT,
     resolve_classifier_path,
@@ -38,7 +39,6 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ── All config from env, no defaults ─────────────────────────────
-MLFLOW_TRACKING_URI = require_env("MLFLOW_TRACKING_URI")
 MODEL_NAME = require_env("MODEL_NAME")
 MODEL_STAGE = require_env("MODEL_STAGE")
 POLL_INTERVAL = int(require_env("SERVING_MODEL_POLL_INTERVAL"))
@@ -63,68 +63,48 @@ class ModelManager:
         self.model_version: str | None = None
         self._lock = threading.Lock()
         self._artifact_dir = tempfile.mkdtemp(prefix="ml_model_")
+        self._controller = MLflowModelArtifactController()
 
     def load_from_mlflow(self) -> bool:
-        import mlflow
-        mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
-        client = mlflow.tracking.MlflowClient()
-
-        # debug logging of everything
-        logger.info(f"Connecting to MLflow at {MLFLOW_TRACKING_URI}...")
-        logger.info(f"Searching for model '{MODEL_NAME}' in stage '{MODEL_STAGE}'...")
-        logger.info("Registered models:")
-        models = client.search_registered_models()
-        if not models:
-            logger.warning("No registered models found.")
-        for m in models:
-            logger.info(f"  {m.name}")
-            for v in m.latest_versions:
-                logger.info(f"    v{v.version}: stage={v.current_stage} run={v.run_id}")
-
-        logger.info(f"MLFLOW PATH_ONNX_ROOT: {MLFLOW_PATH_ONNX_ROOT}")
-        logger.info(f"Local artifact dir: {self._artifact_dir}")
-
         try:
-            versions = client.search_model_versions(f"name='{MODEL_NAME}'")
-            prod = next((v for v in versions if v.current_stage == MODEL_STAGE), None)
+            run_id = self._controller.get_production_run_id(MODEL_NAME, MODEL_STAGE)
+        except ModelArtifactError as e:
+            logger.warning(str(e))
+            return False
 
-            if prod is None:
-                logger.warning(f"No model in stage '{MODEL_STAGE}' for '{MODEL_NAME}'")
-                return False
-
-            run_id = prod.run_id
-            if self.model_version == run_id:
-                return True
-
-            logger.info(f"Downloading artifacts from run {run_id}...")
-
-            # Download the entire onnx/ directory — gets .onnx AND .onnx.data
-            onnx_dir = client.download_artifacts(run_id, MLFLOW_PATH_ONNX_ROOT, self._artifact_dir)
-            logger.info(f"Downloaded to: {onnx_dir}")
-
-            # Resolve paths (crashes with diagnostic dump if files missing)
-            classifier_path = resolve_classifier_path(onnx_dir)
-            embedder_path = resolve_embedder_path(onnx_dir)
-            logger.info(f"Classifier: {classifier_path}")
-            logger.info(f"Embedder:   {embedder_path}")
-
-            # Load ONNX Runtime sessions
-            opts = ort.SessionOptions()
-            opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-            new_cls = ort.InferenceSession(classifier_path, opts)
-            new_emb = ort.InferenceSession(embedder_path, opts)
-
-            with self._lock:
-                self.classifier_session = new_cls
-                self.embedder_session = new_emb
-                self.model_version = run_id
-
-            logger.info(f"Model loaded: {run_id}")
+        if self.model_version == run_id:
             return True
 
-        except Exception as e:
-            logger.error(f"Failed to load model: {e}", exc_info=True)
+        logger.info(f"Downloading artifacts from run {run_id}...")
+        try:
+            onnx_dir = self._controller.download_artifacts(
+                run_id, MLFLOW_PATH_ONNX_ROOT, self._artifact_dir
+            )
+        except ModelArtifactError as e:
+            logger.error(str(e))
             return False
+
+        logger.info(f"Downloaded to: {onnx_dir}")
+
+        # Resolve paths (crashes with diagnostic dump if files missing)
+        classifier_path = resolve_classifier_path(onnx_dir)
+        embedder_path = resolve_embedder_path(onnx_dir)
+        logger.info(f"Classifier: {classifier_path}")
+        logger.info(f"Embedder:   {embedder_path}")
+
+        # Load ONNX Runtime sessions
+        opts = ort.SessionOptions()
+        opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        new_cls = ort.InferenceSession(classifier_path, opts)
+        new_emb = ort.InferenceSession(embedder_path, opts)
+
+        with self._lock:
+            self.classifier_session = new_cls
+            self.embedder_session = new_emb
+            self.model_version = run_id
+
+        logger.info(f"Model loaded: {run_id}")
+        return True
 
     def predict(self, features_array: np.ndarray) -> dict:
         with self._lock:

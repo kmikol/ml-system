@@ -40,7 +40,8 @@
                 "ms-python.vscode-pylance",
                 "charliermarsh.ruff",
                 "ms-azuretools.vscode-docker",
-                "redhat.vscode-yaml"
+                "redhat.vscode-yaml",
+                "anthropic.claude-code"
             ],
             "settings": {
                 "python.defaultInterpreterPath": "/usr/local/bin/python",

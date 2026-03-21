@@ -13,10 +13,10 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 import pytorch_lightning as pl
-import mlflow
 import onnx
 
 from shared.config import require_env
+from shared.model_artifact_controller import MLflowModelArtifactController
 from shared.artifact_paths import (
     ONNX_FILENAME,
     MLFLOW_PATH_CLASSIFIER,
@@ -34,7 +34,6 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ── All config from env, no defaults ─────────────────────────────
-MLFLOW_TRACKING_URI = require_env("MLFLOW_TRACKING_URI")
 MODEL_NAME = require_env("MODEL_NAME")
 MAX_EPOCHS = int(require_env("TRAINING_MAX_EPOCHS"))
 SEED = int(require_env("TRAINING_SEED"))
@@ -173,10 +172,6 @@ def compute_reference_distributions(model, features, labels):
 def main():
     pl.seed_everything(SEED, workers=True)
 
-    mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
-    mlflow.set_experiment("ml_system_training")
-    logger.info(f"MLflow: {MLFLOW_TRACKING_URI}")
-
     features, labels = generate_synthetic_data(5000, SEED)
     train_loader, val_loader = make_dataloaders(features, labels, SEED, BATCH_SIZE)
     logger.info(f"Dataset: {len(features)} samples, {NUM_CLASSES} classes, {INPUT_DIM} features")
@@ -193,11 +188,11 @@ def main():
         deterministic=True,
     )
 
-    with mlflow.start_run() as run:
-        run_id = run.info.run_id
+    controller = MLflowModelArtifactController()
+    with controller.start_run("ml_system_training") as run_id:
         logger.info(f"Run ID: {run_id}")
 
-        mlflow.log_params({
+        controller.log_params(run_id, {
             "input_dim": INPUT_DIM, "embedding_dim": EMBEDDING_DIM,
             "num_classes": NUM_CLASSES, "lr": LR,
             "batch_size": BATCH_SIZE, "max_epochs": MAX_EPOCHS, "seed": SEED,
@@ -206,17 +201,17 @@ def main():
         trainer.fit(model, train_loader, val_loader)
 
         val_metrics = trainer.callback_metrics
-        mlflow.log_metrics({
+        controller.log_metrics(run_id, {
             "val_loss": float(val_metrics.get("val_loss", 0)),
-            "val_acc": float(val_metrics.get("val_acc", 0)),
-            "val_f1": float(val_metrics.get("val_f1", 0)),
+            "val_acc":  float(val_metrics.get("val_acc",  0)),
+            "val_f1":   float(val_metrics.get("val_f1",   0)),
         })
 
         with tempfile.TemporaryDirectory() as tmpdir:
             # ── Export ONNX ──
             cls_dir, emb_dir = export_onnx(model, tmpdir)
-            mlflow.log_artifacts(cls_dir, MLFLOW_PATH_CLASSIFIER)
-            mlflow.log_artifacts(emb_dir, MLFLOW_PATH_EMBEDDER)
+            controller.log_artifacts(run_id, cls_dir, MLFLOW_PATH_CLASSIFIER)
+            controller.log_artifacts(run_id, emb_dir, MLFLOW_PATH_EMBEDDER)
 
             # ── Reference distributions ──
             refs = compute_reference_distributions(model, features, labels)
@@ -224,29 +219,23 @@ def main():
             ref_path = os.path.join(tmpdir, REFERENCE_DIST_FILENAME)
             with open(ref_path, "w") as f:
                 json.dump(refs["reference_distribution"], f)
-            mlflow.log_artifact(ref_path)
+            controller.log_artifact(run_id, ref_path)
 
             gauss_path = os.path.join(tmpdir, CLASS_GAUSSIANS_FILENAME)
             with open(gauss_path, "w") as f:
                 json.dump(refs["class_gaussians"], f)
-            mlflow.log_artifact(gauss_path)
+            controller.log_artifact(run_id, gauss_path)
 
             schema_path = os.path.join(tmpdir, FEATURE_SCHEMA_FILENAME)
             with open(schema_path, "w") as f:
                 json.dump(FEATURE_SCHEMA, f, indent=2)
-            mlflow.log_artifact(schema_path)
+            controller.log_artifact(run_id, schema_path)
 
         # ── Register model ──
-        model_uri = f"runs:/{run_id}/{MLFLOW_PATH_CLASSIFIER}"
-        result = mlflow.register_model(model_uri, MODEL_NAME)
-        logger.info(f"Registered version {result.version}")
-
-        client = mlflow.tracking.MlflowClient()
-        client.transition_model_version_stage(
-            name=MODEL_NAME, version=result.version,
-            stage="Production", archive_existing_versions=True,
-        )
-        logger.info(f"Version {result.version} → Production")
+        version = controller.register_model(run_id, MODEL_NAME)
+        logger.info(f"Registered version {version}")
+        controller.promote_model(MODEL_NAME, version)
+        logger.info(f"Version {version} → Production")
 
     logger.info("Done.")
 

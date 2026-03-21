@@ -36,13 +36,31 @@ spec:
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
           ports:
             - containerPort: {{ .Values.serving.port }}
-          {{- if .Values.serving.env }}
           env:
             {{- range $key, $val := .Values.serving.env }}
             - name: {{ $key }}
               value: {{ $val | quote }}
             {{- end }}
-          {{- end }}
+            # AWS credentials from Secret so they are not exposed in values files.
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: ml-system-secrets
+                  key: minio-access-key
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ml-system-secrets
+                  key: minio-secret-key
+          readinessProbe:
+            # Serving returns 503 until the ONNX model is loaded from MLflow.
+            # Without this probe, k8s routes traffic to the pod before it is ready.
+            httpGet:
+              path: /health
+              port: {{ .Values.serving.port }}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 24   # up to 2 min for model download on slow connections
           resources:
             {{- toYaml .Values.serving.resources | nindent 12 }}
 ---

@@ -12,8 +12,6 @@ serving:
   env:
     MLFLOW_TRACKING_URI: "http://mlflow:5000"
     MLFLOW_S3_ENDPOINT_URL: "http://minio:9000"
-    AWS_ACCESS_KEY_ID: "minioadmin"
-    AWS_SECRET_ACCESS_KEY: "minioadmin"
     MODEL_NAME: "ml_system_model"
     MODEL_STAGE: "Production"
     SERVING_MODEL_POLL_INTERVAL: "60"

@@ -25,7 +25,6 @@ Usage in serving (downloading):
 
 import os
 
-
 # ── Filenames ────────────────────────────────────────────────────
 ONNX_FILENAME = "model.onnx"
 REFERENCE_DIST_FILENAME = "reference_distribution.json"
@@ -65,9 +64,10 @@ def resolve_embedder_path(onnx_download_dir: str) -> str:
 def _dump_tree(root: str, expected: str):
     """On failure, print what's actually on disk so debugging is immediate."""
     import sys
+
     print(f"\n  FATAL: Expected file '{expected}' not found in '{root}'", file=sys.stderr)
-    print(f"         Actual contents:", file=sys.stderr)
-    for dirpath, dirnames, filenames in os.walk(root):
+    print("         Actual contents:", file=sys.stderr)
+    for dirpath, _dirnames, filenames in os.walk(root):
         level = dirpath.replace(root, "").count(os.sep)
         indent = "           " + "  " * level
         print(f"{indent}{os.path.basename(dirpath)}/", file=sys.stderr)

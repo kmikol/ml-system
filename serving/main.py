@@ -5,34 +5,37 @@ Usage: uvicorn serving.main:app --host 0.0.0.0 --port 8000
 """
 
 import asyncio
-import time
-import os
-import uuid
 import logging
-import threading
+import os
 import tempfile
+import threading
+import time
+import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import numpy as np
 import onnxruntime as ort
-from scipy.special import softmax
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from prometheus_client import Counter
 from prometheus_fastapi_instrumentator import Instrumentator
+from scipy.special import softmax
 
-from shared.config import require_env
-from shared.model_artifact_controller import MLflowModelArtifactController, ModelArtifactError
 from shared.artifact_paths import (
     MLFLOW_PATH_ONNX_ROOT,
     resolve_classifier_path,
     resolve_embedder_path,
 )
+from shared.config import require_env
+from shared.model_artifact_controller import MLflowModelArtifactController, ModelArtifactError
 from shared.schemas.api import (
-    PredictRequest, PredictResponse, HealthResponse, ValidationErrorResponse,
+    HealthResponse,
+    PredictRequest,
+    PredictResponse,
+    ValidationErrorResponse,
 )
-from shared.schemas.feature_schema import FEATURE_NAMES, INPUT_DIM
+from shared.schemas.feature_schema import FEATURE_NAMES
 from shared.validation import validate_features
 
 logging.basicConfig(level=logging.INFO)
@@ -111,10 +114,12 @@ class ModelManager:
             if self.classifier_session is None:
                 raise RuntimeError("Model not loaded")
             logits = self.classifier_session.run(
-                ["logits"], {"features": features_array.astype(np.float32)},
+                ["logits"],
+                {"features": features_array.astype(np.float32)},
             )[0]
             embedding = self.embedder_session.run(
-                ["embedding"], {"features": features_array.astype(np.float32)},
+                ["embedding"],
+                {"features": features_array.astype(np.float32)},
             )[0]
 
         probs = softmax(logits[0])
@@ -141,6 +146,7 @@ class RedisPublisher:
     def connect(self):
         try:
             import redis
+
             self._client = redis.from_url(REDIS_URL, socket_timeout=1)
             self._client.ping()
             self._available = True
@@ -153,7 +159,9 @@ class RedisPublisher:
         if not self._available:
             return
         try:
-            self._client.xadd(REDIS_STREAM_NAME, {"payload": event_json}, maxlen=100000, approximate=True)
+            self._client.xadd(
+                REDIS_STREAM_NAME, {"payload": event_json}, maxlen=100000, approximate=True
+            )
         except Exception as e:
             self._failures += 1
             logger.warning(f"Redis publish failed ({self._failures} total): {e}")
@@ -227,9 +235,10 @@ async def predict(request: PredictRequest):
 
     try:
         from shared.schemas.inference_event import InferenceEvent
+
         event = InferenceEvent(
             event_id=str(uuid.uuid4()),
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             model_version=model_manager.model_version,
             request_id=request_id,
             features=request.features,

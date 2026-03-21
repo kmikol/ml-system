@@ -1,13 +1,15 @@
 # training/model.py
+import pytorch_lightning as pl
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import pytorch_lightning as pl
 from torchmetrics import Accuracy, F1Score
 
 
 class Classifier(pl.LightningModule):
-    def __init__(self, input_dim: int, embedding_dim: int, num_classes: int, lr: float, hidden_dim: int = 128):
+    def __init__(
+        self, input_dim: int, embedding_dim: int, num_classes: int, lr: float, hidden_dim: int = 128
+    ):
         super().__init__()
         self.save_hyperparameters()
 
@@ -62,6 +64,7 @@ class Classifier(pl.LightningModule):
 
 class ClassifierWrapper(nn.Module):
     """For ONNX export: input → logits only."""
+
     def __init__(self, model: Classifier):
         super().__init__()
         self.feature_extractor = model.feature_extractor
@@ -73,6 +76,7 @@ class ClassifierWrapper(nn.Module):
 
 class EmbedderWrapper(nn.Module):
     """For ONNX export: input → embedding only."""
+
     def __init__(self, model: Classifier):
         super().__init__()
         self.feature_extractor = model.feature_extractor

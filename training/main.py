@@ -4,29 +4,33 @@ Training pipeline: generate data → train → export ONNX → register in MLflo
 Usage: python -m training.main
 """
 
-import os
 import json
-import tempfile
 import logging
+import os
+import tempfile
 
 import numpy as np
+import onnx
+import pytorch_lightning as pl
 import torch
 from torch.utils.data import DataLoader, TensorDataset
-import pytorch_lightning as pl
-import onnx
 
-from shared.config import require_env
-from shared.model_artifact_controller import MLflowModelArtifactController
 from shared.artifact_paths import (
-    ONNX_FILENAME,
-    MLFLOW_PATH_CLASSIFIER,
-    MLFLOW_PATH_EMBEDDER,
-    REFERENCE_DIST_FILENAME,
     CLASS_GAUSSIANS_FILENAME,
     FEATURE_SCHEMA_FILENAME,
+    MLFLOW_PATH_CLASSIFIER,
+    MLFLOW_PATH_EMBEDDER,
+    ONNX_FILENAME,
+    REFERENCE_DIST_FILENAME,
 )
+from shared.config import require_env
+from shared.model_artifact_controller import MLflowModelArtifactController
 from shared.schemas.feature_schema import (
-    FEATURE_NAMES, FEATURE_SCHEMA, INPUT_DIM, EMBEDDING_DIM, NUM_CLASSES,
+    EMBEDDING_DIM,
+    FEATURE_NAMES,
+    FEATURE_SCHEMA,
+    INPUT_DIM,
+    NUM_CLASSES,
 )
 from training.model import Classifier, ClassifierWrapper, EmbedderWrapper
 
@@ -97,8 +101,11 @@ def export_onnx(model: Classifier, export_dir: str):
     wrapper = ClassifierWrapper(model)
     wrapper.eval()
     torch.onnx.export(
-        wrapper, dummy, cls_path,
-        input_names=["features"], output_names=["logits"],
+        wrapper,
+        dummy,
+        cls_path,
+        input_names=["features"],
+        output_names=["logits"],
         dynamic_axes={"features": {0: "batch"}, "logits": {0: "batch"}},
         opset_version=17,
     )
@@ -112,8 +119,11 @@ def export_onnx(model: Classifier, export_dir: str):
     wrapper = EmbedderWrapper(model)
     wrapper.eval()
     torch.onnx.export(
-        wrapper, dummy, emb_path,
-        input_names=["features"], output_names=["embedding"],
+        wrapper,
+        dummy,
+        emb_path,
+        input_names=["features"],
+        output_names=["embedding"],
         dynamic_axes={"features": {0: "batch"}, "embedding": {0: "batch"}},
         opset_version=17,
     )
@@ -176,7 +186,9 @@ def main():
     train_loader, val_loader = make_dataloaders(features, labels, SEED, BATCH_SIZE)
     logger.info(f"Dataset: {len(features)} samples, {NUM_CLASSES} classes, {INPUT_DIM} features")
 
-    model = Classifier(input_dim=INPUT_DIM, embedding_dim=EMBEDDING_DIM, num_classes=NUM_CLASSES, lr=LR)
+    model = Classifier(
+        input_dim=INPUT_DIM, embedding_dim=EMBEDDING_DIM, num_classes=NUM_CLASSES, lr=LR
+    )
 
     trainer = pl.Trainer(
         max_epochs=MAX_EPOCHS,
@@ -192,20 +204,30 @@ def main():
     with controller.start_run("ml_system_training") as run_id:
         logger.info(f"Run ID: {run_id}")
 
-        controller.log_params(run_id, {
-            "input_dim": INPUT_DIM, "embedding_dim": EMBEDDING_DIM,
-            "num_classes": NUM_CLASSES, "lr": LR,
-            "batch_size": BATCH_SIZE, "max_epochs": MAX_EPOCHS, "seed": SEED,
-        })
+        controller.log_params(
+            run_id,
+            {
+                "input_dim": INPUT_DIM,
+                "embedding_dim": EMBEDDING_DIM,
+                "num_classes": NUM_CLASSES,
+                "lr": LR,
+                "batch_size": BATCH_SIZE,
+                "max_epochs": MAX_EPOCHS,
+                "seed": SEED,
+            },
+        )
 
         trainer.fit(model, train_loader, val_loader)
 
         val_metrics = trainer.callback_metrics
-        controller.log_metrics(run_id, {
-            "val_loss": float(val_metrics.get("val_loss", 0)),
-            "val_acc":  float(val_metrics.get("val_acc",  0)),
-            "val_f1":   float(val_metrics.get("val_f1",   0)),
-        })
+        controller.log_metrics(
+            run_id,
+            {
+                "val_loss": float(val_metrics.get("val_loss", 0)),
+                "val_acc": float(val_metrics.get("val_acc", 0)),
+                "val_f1": float(val_metrics.get("val_f1", 0)),
+            },
+        )
 
         with tempfile.TemporaryDirectory() as tmpdir:
             # ── Export ONNX ──

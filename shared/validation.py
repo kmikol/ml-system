@@ -25,7 +25,7 @@ def validate_features(features: dict[str, float]) -> list[dict] | None:
         try:
             value = float(value)
         except (TypeError, ValueError):
-            errors.append({"field": name, "error": f"cannot convert to float"})
+            errors.append({"field": name, "error": "cannot convert to float"})
             continue
         if spec["min"] is not None and value < spec["min"]:
             errors.append({"field": name, "error": f"value {value} below minimum {spec['min']}"})

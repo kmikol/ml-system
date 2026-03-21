@@ -10,15 +10,17 @@ import os
 import sys
 import tempfile
 
-from shared.config import require_env
+import mlflow
 from shared.artifact_paths import (
-    MLFLOW_PATH_ONNX_ROOT, resolve_classifier_path, resolve_embedder_path,
+    MLFLOW_PATH_ONNX_ROOT,
+    resolve_classifier_path,
+    resolve_embedder_path,
 )
+from shared.config import require_env
 
 MLFLOW_TRACKING_URI = require_env("MLFLOW_TRACKING_URI")
 MODEL_NAME = require_env("MODEL_NAME")
 
-import mlflow
 mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
 client = mlflow.tracking.MlflowClient()
 
@@ -51,6 +53,8 @@ print(f"  Source:  {prod.source}")
 
 
 section(f"Artifacts for {run_id}")
+
+
 def list_artifacts(path="", indent=0):
     for a in client.list_artifacts(run_id, path):
         pfx = "  " + "  " * indent
@@ -58,6 +62,8 @@ def list_artifacts(path="", indent=0):
         print(f"{pfx}{a.path}{sz}")
         if a.is_dir:
             list_artifacts(a.path, indent + 1)
+
+
 list_artifacts()
 
 
@@ -66,13 +72,13 @@ with tempfile.TemporaryDirectory() as tmpdir:
     onnx_dir = client.download_artifacts(run_id, MLFLOW_PATH_ONNX_ROOT, tmpdir)
     print(f"  Downloaded to: {onnx_dir}")
 
-    print(f"\n  Local files:")
-    for root, dirs, files in os.walk(onnx_dir):
+    print("\n  Local files:")
+    for root, _dirs, files in os.walk(onnx_dir):
         lvl = root.replace(onnx_dir, "").count(os.sep)
         print(f"  {'  ' * lvl}{os.path.basename(root)}/")
         for f in files:
             sz = os.path.getsize(os.path.join(root, f))
-            print(f"  {'  ' * (lvl+1)}{f}  ({sz}b)")
+            print(f"  {'  ' * (lvl + 1)}{f}  ({sz}b)")
 
     cls_path = resolve_classifier_path(onnx_dir)
     emb_path = resolve_embedder_path(onnx_dir)
@@ -80,8 +86,8 @@ with tempfile.TemporaryDirectory() as tmpdir:
     print(f"  Embedder:   {emb_path}")
 
     try:
-        import onnxruntime as ort
         import numpy as np
+        import onnxruntime as ort
 
         for label, path in [("Classifier", cls_path), ("Embedder", emb_path)]:
             sess = ort.InferenceSession(path)

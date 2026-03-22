@@ -8,7 +8,8 @@ serving:
   replicas: 1
   image: ml-system-serving:latest
   port: 8000
-  env: {}
+  env:
+    DATA_CONTROLLER_DB_URL: "postgresql://mlflow:mlflow@postgres:5432/mlflow"
   service:
     type: ClusterIP
   resources:

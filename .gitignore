@@ -7,3 +7,5 @@ data/
 *.onnx.data
 
 sandbox
+
+.DS_Store

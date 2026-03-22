@@ -1,0 +1,44 @@
+site_name: MLOps System
+site_description: End-to-end MLOps platform for MNIST classification — training, serving, drift detection, and active learning.
+repo_url: https://github.com/kmikol/ml-system  # update to match your repo URL
+repo_name: kmikol/ml-system
+
+docs_dir: .
+site_dir: ../site
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            show_source: true
+            show_root_heading: true
+            heading_level: 2
+
+nav:
+  - Home: index.md
+  - Architecture: architecture.md
+  - API Reference:
+    - Data Controller: api/data_controller.md
+    - Model Artifact Controller: api/model_artifact_controller.md
+  - Roadmap: roadmap.md

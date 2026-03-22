@@ -358,6 +358,18 @@ clean.pyc: ## Remove Python cache
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 
 # ═══════════════════════════════════════════════════════════════
+# DOCS
+# ═══════════════════════════════════════════════════════════════
+
+.PHONY: docs.serve.local docs.serve.online
+
+docs.serve.local: ## Serve docs locally with live reload (http://localhost:8001)
+	mkdocs serve -f docs/mkdocs.yml --dev-addr 127.0.0.1:8001
+
+docs.serve.online: ## Build and deploy docs to GitHub Pages (gh-pages branch)
+	mkdocs gh-deploy -f docs/mkdocs.yml --force
+
+# ═══════════════════════════════════════════════════════════════
 # KUBERNETES DEBUGGING
 #
 # Pod stuck in ImagePullBackOff:

@@ -2,6 +2,7 @@ site_name: MLOps System
 site_description: End-to-end MLOps platform for MNIST classification — training, serving, drift detection, and active learning.
 repo_url: https://github.com/kmikol/ml-system  # update to match your repo URL
 repo_name: kmikol/ml-system
+site_url: https://kmikol.github.io/ml-system/
 
 docs_dir: .
 site_dir: ../site
@@ -30,6 +31,7 @@ plugins:
   - mkdocstrings:
       handlers:
         python:
+          paths: [".."]
           options:
             show_source: true
             show_root_heading: true

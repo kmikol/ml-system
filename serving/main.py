@@ -18,7 +18,7 @@ import numpy as np
 import onnxruntime as ort
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
-from prometheus_client import Counter
+from prometheus_client import Counter, Histogram
 from prometheus_fastapi_instrumentator import Instrumentator
 from scipy.special import softmax
 
@@ -56,6 +56,17 @@ _concurrency = asyncio.Semaphore(1)
 # rate, not throughput. http_requests_total only counts completions and would
 # show ~3 RPS regardless of load, preventing scale-out.
 _predict_arrivals = Counter("predict_arrivals_total", "Predict requests at arrival")
+_prediction_class_counter = Counter(
+    "prediction_class_total",
+    "Total predictions per class",
+    ["class_label"],
+)
+_confidence_histogram = Histogram(
+    "prediction_confidence_score",
+    "Confidence score distribution per predicted class",
+    ["class_label"],
+    buckets=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99, 1.0],
+)
 
 REDIS_URL = os.getenv("REDIS_URL", "")
 REDIS_STREAM_NAME = os.getenv("REDIS_STREAM_NAME", "inference_events")
@@ -228,6 +239,8 @@ async def predict(request: PredictRequest):
     features_array = np.array([np.array(request.image).flatten()], dtype=np.float32)
     result = model_manager.predict(features_array)
     request_id = request.request_id or str(uuid.uuid4())
+    _prediction_class_counter.labels(class_label=str(result["prediction"])).inc()
+    _confidence_histogram.labels(class_label=str(result["prediction"])).observe(result["confidence"])
 
     response = PredictResponse(
         prediction=result["prediction"],

@@ -5,9 +5,10 @@ The fixture replaces ctrl._mlflow and ctrl._client with MagicMocks after
 construction, so each test starts with a clean, controllable state.
 """
 
-import pytest
 from contextlib import contextmanager
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 from shared.artifact_paths import MLFLOW_PATH_CLASSIFIER
 from shared.model_artifact_controller import MLflowModelArtifactController, ModelArtifactError
@@ -25,6 +26,7 @@ def ctrl(monkeypatch):
 
 
 # ── start_run ─────────────────────────────────────────────────────────────────
+
 
 class TestStartRun:
     def test_yields_run_id(self, ctrl):
@@ -58,17 +60,18 @@ class TestStartRun:
     def test_wraps_set_experiment_error(self, ctrl):
         ctrl._mlflow.set_experiment.side_effect = Exception("connection refused")
 
-        with pytest.raises(ModelArtifactError, match="my_experiment"):
-            with ctrl.start_run("my_experiment"):
-                pass
+        with (
+            pytest.raises(ModelArtifactError, match="my_experiment"),
+            ctrl.start_run("my_experiment"),
+        ):
+            pass
 
     def test_wraps_start_run_error(self, ctrl):
         ctrl._mlflow.set_experiment.return_value = None
         ctrl._mlflow.start_run.side_effect = Exception("server error")
 
-        with pytest.raises(ModelArtifactError):
-            with ctrl.start_run("my_experiment"):
-                pass
+        with pytest.raises(ModelArtifactError), ctrl.start_run("my_experiment"):
+            pass
 
     def test_does_not_suppress_model_artifact_error_from_body(self, ctrl):
         mock_run = MagicMock()
@@ -80,12 +83,12 @@ class TestStartRun:
 
         ctrl._mlflow.start_run = fake_start_run
 
-        with pytest.raises(ModelArtifactError, match="inner error"):
-            with ctrl.start_run("exp"):
-                raise ModelArtifactError("inner error")
+        with pytest.raises(ModelArtifactError, match="inner error"), ctrl.start_run("exp"):
+            raise ModelArtifactError("inner error")
 
 
 # ── log_params ────────────────────────────────────────────────────────────────
+
 
 class TestLogParams:
     def test_calls_log_param_for_each_entry(self, ctrl):
@@ -108,6 +111,7 @@ class TestLogParams:
 
 # ── log_metrics ───────────────────────────────────────────────────────────────
 
+
 class TestLogMetrics:
     def test_calls_log_metric_for_each_entry(self, ctrl):
         ctrl.log_metrics("run-2", {"val_loss": 0.42, "val_acc": 0.91})
@@ -125,10 +129,13 @@ class TestLogMetrics:
 
 # ── log_artifact ──────────────────────────────────────────────────────────────
 
+
 class TestLogArtifact:
     def test_calls_client_with_all_args(self, ctrl):
         ctrl.log_artifact("run-3", "/tmp/model.onnx", "onnx/classifier")
-        ctrl._client.log_artifact.assert_called_once_with("run-3", "/tmp/model.onnx", "onnx/classifier")
+        ctrl._client.log_artifact.assert_called_once_with(
+            "run-3", "/tmp/model.onnx", "onnx/classifier"
+        )
 
     def test_artifact_path_defaults_to_none(self, ctrl):
         ctrl.log_artifact("run-3", "/tmp/schema.json")
@@ -143,10 +150,13 @@ class TestLogArtifact:
 
 # ── log_artifacts ─────────────────────────────────────────────────────────────
 
+
 class TestLogArtifacts:
     def test_calls_client_with_all_args(self, ctrl):
         ctrl.log_artifacts("run-4", "/tmp/cls_dir", "onnx/classifier")
-        ctrl._client.log_artifacts.assert_called_once_with("run-4", "/tmp/cls_dir", "onnx/classifier")
+        ctrl._client.log_artifacts.assert_called_once_with(
+            "run-4", "/tmp/cls_dir", "onnx/classifier"
+        )
 
     def test_wraps_client_error(self, ctrl):
         ctrl._client.log_artifacts.side_effect = Exception("upload failed")
@@ -156,6 +166,7 @@ class TestLogArtifacts:
 
 
 # ── register_model ────────────────────────────────────────────────────────────
+
 
 class TestRegisterModel:
     def test_returns_version_string(self, ctrl):
@@ -186,6 +197,7 @@ class TestRegisterModel:
 
 # ── promote_model ─────────────────────────────────────────────────────────────
 
+
 class TestPromoteModel:
     def test_transitions_to_production(self, ctrl):
         ctrl.promote_model("my_model", "3")
@@ -205,6 +217,7 @@ class TestPromoteModel:
 
 
 # ── get_production_run_id ─────────────────────────────────────────────────────
+
 
 class TestGetProductionRunId:
     def _make_version(self, stage, run_id):
@@ -256,6 +269,7 @@ class TestGetProductionRunId:
 
 # ── download_artifacts ────────────────────────────────────────────────────────
 
+
 class TestDownloadArtifacts:
     def test_returns_local_path(self, ctrl):
         ctrl._client.download_artifacts.return_value = "/tmp/ml_model_xyz/onnx"
@@ -263,7 +277,9 @@ class TestDownloadArtifacts:
         result = ctrl.download_artifacts("run-6", "onnx", "/tmp/ml_model_xyz")
 
         assert result == "/tmp/ml_model_xyz/onnx"
-        ctrl._client.download_artifacts.assert_called_once_with("run-6", "onnx", "/tmp/ml_model_xyz")
+        ctrl._client.download_artifacts.assert_called_once_with(
+            "run-6", "onnx", "/tmp/ml_model_xyz"
+        )
 
     def test_wraps_client_error(self, ctrl):
         ctrl._client.download_artifacts.side_effect = Exception("S3 key not found")

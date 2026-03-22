@@ -265,15 +265,22 @@ train.local: ## Train model locally (requires MLflow on localhost:5000 via k3d)
 # TESTING + DEBUG
 # ═══════════════════════════════════════════════════════════════
 
-.PHONY: test test.unit lint serve.test serve.test.load mlflow.debug mlflow.ui minio.ui clean.pyc
+.PHONY: test test.unit lint lint.fix format serve.test serve.test.load mlflow.debug mlflow.ui minio.ui clean.pyc
 
 test: test.unit ## Run all tests
 
 test.unit: ## Run unit tests
 	PYTHONPATH=. python -m pytest tests/unit/ -v
 
-lint: ## Lint
+lint: ## Check code with ruff (no changes)
 	ruff check .
+
+lint.fix: ## Auto-fix ruff lint issues and format code
+	ruff check --fix .
+	ruff format .
+
+format: ## Format code with ruff
+	ruff format .
 
 serve.test: ## Smoke test against running serving (works with compose or k3d)
 	@echo "$(CYAN)Health:$(RESET)"

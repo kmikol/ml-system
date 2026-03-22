@@ -10,8 +10,9 @@ the ModelArtifactController Protocol.
 
 from __future__ import annotations
 
+from collections.abc import Generator
 from contextlib import AbstractContextManager, contextmanager
-from typing import Any, Generator, Protocol
+from typing import Any, Protocol
 
 from shared.artifact_paths import MLFLOW_PATH_CLASSIFIER
 from shared.config import require_env
@@ -45,15 +46,11 @@ class ModelArtifactController(Protocol):
         """Log numeric evaluation metrics to a run."""
         ...
 
-    def log_artifact(
-        self, run_id: str, local_path: str, artifact_path: str | None = None
-    ) -> None:
+    def log_artifact(self, run_id: str, local_path: str, artifact_path: str | None = None) -> None:
         """Upload a single file to a run's artifact store."""
         ...
 
-    def log_artifacts(
-        self, run_id: str, local_dir: str, artifact_path: str | None = None
-    ) -> None:
+    def log_artifacts(self, run_id: str, local_dir: str, artifact_path: str | None = None) -> None:
         """Upload all files in a directory to a run's artifact store."""
         ...
 
@@ -72,9 +69,7 @@ class ModelArtifactController(Protocol):
         """
         ...
 
-    def download_artifacts(
-        self, run_id: str, artifact_path: str, local_dir: str
-    ) -> str:
+    def download_artifacts(self, run_id: str, artifact_path: str, local_dir: str) -> str:
         """Download the artifact subtree at *artifact_path* to *local_dir*.
 
         Returns the path to the downloaded root directory.
@@ -116,22 +111,16 @@ class MLflowModelArtifactController:
             for key, value in params.items():
                 self._client.log_param(run_id, str(key), str(value))
         except Exception as exc:
-            raise ModelArtifactError(
-                f"Failed to log params to run '{run_id}': {exc}"
-            ) from exc
+            raise ModelArtifactError(f"Failed to log params to run '{run_id}': {exc}") from exc
 
     def log_metrics(self, run_id: str, metrics: dict[str, float]) -> None:
         try:
             for key, value in metrics.items():
                 self._client.log_metric(run_id, str(key), float(value))
         except Exception as exc:
-            raise ModelArtifactError(
-                f"Failed to log metrics to run '{run_id}': {exc}"
-            ) from exc
+            raise ModelArtifactError(f"Failed to log metrics to run '{run_id}': {exc}") from exc
 
-    def log_artifact(
-        self, run_id: str, local_path: str, artifact_path: str | None = None
-    ) -> None:
+    def log_artifact(self, run_id: str, local_path: str, artifact_path: str | None = None) -> None:
         try:
             self._client.log_artifact(run_id, local_path, artifact_path)
         except Exception as exc:
@@ -139,9 +128,7 @@ class MLflowModelArtifactController:
                 f"Failed to log artifact '{local_path}' to run '{run_id}': {exc}"
             ) from exc
 
-    def log_artifacts(
-        self, run_id: str, local_dir: str, artifact_path: str | None = None
-    ) -> None:
+    def log_artifacts(self, run_id: str, local_dir: str, artifact_path: str | None = None) -> None:
         try:
             self._client.log_artifacts(run_id, local_dir, artifact_path)
         except Exception as exc:
@@ -177,9 +164,7 @@ class MLflowModelArtifactController:
             versions = self._client.search_model_versions(f"name='{model_name}'")
             prod = next((v for v in versions if v.current_stage == stage), None)
             if prod is None:
-                raise ModelArtifactError(
-                    f"No model '{model_name}' in stage '{stage}'"
-                )
+                raise ModelArtifactError(f"No model '{model_name}' in stage '{stage}'")
             return prod.run_id
         except ModelArtifactError:
             raise
@@ -188,9 +173,7 @@ class MLflowModelArtifactController:
                 f"Failed to find '{stage}' version of '{model_name}': {exc}"
             ) from exc
 
-    def download_artifacts(
-        self, run_id: str, artifact_path: str, local_dir: str
-    ) -> str:
+    def download_artifacts(self, run_id: str, artifact_path: str, local_dir: str) -> str:
         try:
             return self._client.download_artifacts(run_id, artifact_path, local_dir)
         except Exception as exc:

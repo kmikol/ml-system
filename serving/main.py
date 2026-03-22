@@ -36,9 +36,8 @@ from shared.schemas.api import (
     PredictResponse,
     ValidationErrorResponse,
 )
-from shared.schemas.feature_schema import FEATURE_NAMES
 from shared.schemas.predict_record import PredictRecord
-from shared.validation import validate_features
+from shared.validation import validate_image
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -214,7 +213,7 @@ async def predict(request: PredictRequest):
 
     _predict_arrivals.inc()
 
-    errors = validate_features(request.features)
+    errors = validate_image(request.image)
     if errors:
         return JSONResponse(
             status_code=422,
@@ -225,7 +224,7 @@ async def predict(request: PredictRequest):
         async with _concurrency:
             await asyncio.sleep(SIMULATED_LATENCY_S)
 
-    features_array = np.array([[request.features[n] for n in FEATURE_NAMES]], dtype=np.float32)
+    features_array = np.array([np.array(request.image).flatten()], dtype=np.float32)
     result = model_manager.predict(features_array)
     request_id = request.request_id or str(uuid.uuid4())
 
@@ -241,7 +240,7 @@ async def predict(request: PredictRequest):
             prediction_id=request_id,
             timestamp=datetime.now(UTC),
             model_version=model_manager.model_version,
-            features=request.features,
+            image=request.image,
             embedding=result["embedding"],
             prediction=result["prediction"],
             confidence=result["confidence"],
@@ -257,7 +256,7 @@ async def predict(request: PredictRequest):
             timestamp=datetime.now(UTC),
             model_version=model_manager.model_version,
             request_id=request_id,
-            features=request.features,
+            image=request.image,
             embedding=result["embedding"],
             prediction=result["prediction"],
             confidence=result["confidence"],

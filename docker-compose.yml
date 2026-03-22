@@ -53,6 +53,7 @@ services:
       mc mb --ignore-existing local/mlflow-artifacts &&
       mc mb --ignore-existing local/dvc-data &&
       mc mb --ignore-existing local/argo-artifacts &&
+      mc mb --ignore-existing local/mnist-dataset &&
       echo 'Buckets ready.'
       "
     restart: "no"
@@ -123,6 +124,9 @@ services:
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
       MLFLOW_S3_ENDPOINT_URL: ${MLFLOW_S3_ENDPOINT_URL}
+      DATA_CONTROLLER_DB_URL: ${DATA_CONTROLLER_DB_URL}
+      DATASET_S3_ENDPOINT_URL: http://minio:9000
+      DATASET_BUCKET: ${DATASET_BUCKET}
     profiles:
       - training
 

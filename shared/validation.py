@@ -1,35 +1,25 @@
 # shared/validation.py
-from shared.schemas.feature_schema import FEATURE_SCHEMA
+from __future__ import annotations
+
+from shared.schemas.feature_schema import IMAGE_SIZE
 
 
-def validate_features(features: dict[str, float]) -> list[dict] | None:
+def validate_image(image: object) -> list[dict] | None:
     """Returns None if valid, list of error dicts if invalid."""
-    errors = []
+    h, w = IMAGE_SIZE
 
-    for name in FEATURE_SCHEMA:
-        if name not in features:
-            errors.append({"field": name, "error": "missing required feature"})
-    for name in features:
-        if name not in FEATURE_SCHEMA:
-            errors.append({"field": name, "error": "unknown feature"})
+    if not isinstance(image, list) or len(image) != h:
+        return [{"field": "image", "error": f"must be a list of {h} rows"}]
 
-    if errors:
-        return errors
+    for i, row in enumerate(image):
+        if not isinstance(row, list) or len(row) != w:
+            return [{"field": f"image[{i}]", "error": f"must be a list of {w} values"}]
+        for j, val in enumerate(row):
+            try:
+                v = float(val)
+            except (TypeError, ValueError):
+                return [{"field": f"image[{i}][{j}]", "error": "value is not a number"}]
+            if v < 0.0 or v > 1.0:
+                return [{"field": f"image[{i}][{j}]", "error": f"value {v} not in [0, 1]"}]
 
-    for name, spec in FEATURE_SCHEMA.items():
-        value = features[name]
-        if value is None:
-            if not spec["nullable"]:
-                errors.append({"field": name, "error": "null not allowed"})
-            continue
-        try:
-            value = float(value)
-        except (TypeError, ValueError):
-            errors.append({"field": name, "error": "cannot convert to float"})
-            continue
-        if spec["min"] is not None and value < spec["min"]:
-            errors.append({"field": name, "error": f"value {value} below minimum {spec['min']}"})
-        if spec["max"] is not None and value > spec["max"]:
-            errors.append({"field": name, "error": f"value {value} above maximum {spec['max']}"})
-
-    return errors if errors else None
+    return None

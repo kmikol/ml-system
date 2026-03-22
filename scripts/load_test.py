@@ -21,46 +21,70 @@ Defaults: 5 req/s, 60s, no ramp.
 
 import argparse
 import json
+import os
+import random
+import sys
 import threading
 import time
 import urllib.error
 import urllib.request
 from collections import defaultdict
 
-PAYLOAD = json.dumps(
-    {
-        "features": {
-            "age": 35.0,
-            "income": 55000.0,
-            "credit_score": 720.0,
-            "debt_ratio": 1.2,
-            "num_accounts": 5.0,
-        }
-    }
-).encode()
+import numpy as np
+
+_POOL_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "remaining", "images.npy")
+_POOL_SIZE = 1_000  # payloads pre-serialized at startup; avoids per-request numpy/json overhead
 
 HEADERS = {"Content-Type": "application/json"}
 
 _lock = threading.Lock()
 _counters: dict[str, int] = defaultdict(int)
+_latencies: list[float] = []  # per-request ms, collected under _lock
+_pool: list[bytes] = []       # populated in main() before any threads start
+
+
+def _load_pool() -> list[bytes]:
+    """Load remaining MNIST images and pre-serialize a random sample to JSON bytes."""
+    try:
+        images = np.load(_POOL_PATH)  # shape (N, 14, 14), float32
+    except FileNotFoundError:
+        print(f"ERROR: {_POOL_PATH} not found. Run 'make data.prepare' first.", file=sys.stderr)
+        sys.exit(1)
+    print(f"Loaded {len(images):,} images. Pre-serializing {_POOL_SIZE:,} payloads...", flush=True)
+    idx = np.random.randint(0, len(images), size=_POOL_SIZE)
+    return [json.dumps({"image": images[i].tolist()}).encode() for i in idx]
+
+
+def _percentile(data: list[float], p: float) -> float:
+    if not data:
+        return 0.0
+    s = sorted(data)
+    pos = (len(s) - 1) * p / 100
+    lo, hi = int(pos), min(int(pos) + 1, len(s) - 1)
+    return s[lo] + (s[hi] - s[lo]) * (pos - lo)
 
 
 def _send(url: str) -> None:
+    payload = random.choice(_pool)
     t0 = time.perf_counter()
     try:
-        req = urllib.request.Request(url, data=PAYLOAD, headers=HEADERS, method="POST")
+        req = urllib.request.Request(url, data=payload, headers=HEADERS, method="POST")
         with urllib.request.urlopen(req, timeout=10) as resp:
             status = resp.status
             resp.read()
     except urllib.error.HTTPError as e:
         status = e.code
-    except Exception:
+    except urllib.error.URLError as e:
+        print(f"  Connection error: {e.reason}", file=sys.stderr)
         status = 0
-    elapsed = time.perf_counter() - t0
+    except Exception as e:
+        print(f"  Unexpected error ({type(e).__name__}): {e}", file=sys.stderr)
+        status = 0
+    elapsed_ms = (time.perf_counter() - t0) * 1000
     with _lock:
         _counters["total"] += 1
         _counters[f"status_{status}"] += 1
-        _counters["latency_sum_ms"] += int(elapsed * 1000)
+        _latencies.append(elapsed_ms)
 
 
 def _current_rate(
@@ -117,6 +141,8 @@ def main() -> None:
     parser.add_argument("--url", default="http://localhost:8000/predict")
     args = parser.parse_args()
 
+    _pool.extend(_load_pool())
+
     total_expected_final = _total_expected(
         args.duration, args.rate, args.ramp_up, args.duration, args.ramp_down
     )
@@ -145,7 +171,8 @@ def main() -> None:
             with _lock:
                 total = _counters["total"]
                 ok = _counters.get("status_200", 0)
-                avg_ms = (_counters["latency_sum_ms"] / total) if total else 0
+                lat = list(_latencies)
+            avg_ms = sum(lat) / len(lat) if lat else 0
             rate = _current_rate(elapsed, args.rate, args.ramp_up, args.duration, args.ramp_down)
             print(
                 f"  {elapsed:5.1f}s | rate={rate:5.1f} sent={sent:5d} "
@@ -175,14 +202,18 @@ def main() -> None:
     with _lock:
         total = _counters["total"]
         ok = _counters.get("status_200", 0)
-        avg_ms = (_counters["latency_sum_ms"] / total) if total else 0
+        lat = list(_latencies)
         statuses = {k: v for k, v in _counters.items() if k.startswith("status_")}
 
     print(f"\nDone in {elapsed:.1f}s")
     print(f"  Sent        : {sent}")
     print(f"  Completed   : {total}")
     print(f"  200 OK      : {ok}")
-    print(f"  Avg latency : {avg_ms:.0f} ms")
+    if lat:
+        print(f"  Latency avg : {sum(lat) / len(lat):.0f} ms")
+        print(f"  Latency p50 : {_percentile(lat, 50):.0f} ms")
+        print(f"  Latency p95 : {_percentile(lat, 95):.0f} ms")
+        print(f"  Latency p99 : {_percentile(lat, 99):.0f} ms")
     print(f"  By status   : {statuses}")
 
 

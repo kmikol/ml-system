@@ -63,9 +63,13 @@ metadata:
   name: postgres
   namespace: {{ .Values.global.namespace }}
 spec:
+  type: {{ .Values.postgres.service.type | default "ClusterIP" }}
   ports:
     - port: 5432
       targetPort: 5432
+      {{- if .Values.postgres.service.nodePort }}
+      nodePort: {{ .Values.postgres.service.nodePort }}
+      {{- end }}
   selector:
     app: postgres
 {{- end }}

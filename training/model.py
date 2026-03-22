@@ -8,7 +8,7 @@ from torchmetrics import Accuracy, F1Score
 
 class Classifier(pl.LightningModule):
     def __init__(
-        self, input_dim: int, embedding_dim: int, num_classes: int, lr: float, hidden_dim: int = 128
+        self, input_dim: int, embedding_dim: int, num_classes: int, lr: float, hidden_dim: int = 256
     ):
         super().__init__()
         self.save_hyperparameters()

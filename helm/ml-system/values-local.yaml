@@ -32,7 +32,13 @@ prometheus:
     type: NodePort
     nodePort: 30003
 
+postgres:
+  service:
+    type: NodePort
+    nodePort: 30005
+
 minio:
   service:
     type: NodePort
+    apiNodePort: 30006
     consoleNodePort: 30004

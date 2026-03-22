@@ -1,6 +1,6 @@
 # training/main.py
 """
-Training pipeline: generate data → train → export ONNX → register in MLflow.
+Training pipeline: load MNIST from DatasetController → train → export ONNX → register in MLflow.
 Usage: python -m training.main
 """
 
@@ -24,11 +24,10 @@ from shared.artifact_paths import (
     REFERENCE_DIST_FILENAME,
 )
 from shared.config import require_env
+from shared.data_controller import DatasetController
 from shared.model_artifact_controller import MLflowModelArtifactController
 from shared.schemas.feature_schema import (
     EMBEDDING_DIM,
-    FEATURE_NAMES,
-    FEATURE_SCHEMA,
     INPUT_DIM,
     NUM_CLASSES,
 )
@@ -45,44 +44,15 @@ BATCH_SIZE = int(require_env("TRAINING_BATCH_SIZE"))
 LR = float(require_env("TRAINING_LR"))
 
 
-def generate_synthetic_data(n_samples: int, seed: int):
-    rng = np.random.default_rng(seed)
-    class_means = {
-        0: np.array([30.0, 35000.0, 620.0, 1.8, 3.0]),
-        1: np.array([45.0, 65000.0, 710.0, 1.0, 8.0]),
-        2: np.array([60.0, 95000.0, 780.0, 0.4, 15.0]),
-    }
-    class_stds = {
-        0: np.array([8.0, 12000.0, 50.0, 0.5, 2.0]),
-        1: np.array([10.0, 18000.0, 40.0, 0.3, 3.0]),
-        2: np.array([7.0, 15000.0, 30.0, 0.2, 4.0]),
-    }
-    class_priors = np.array([0.4, 0.35, 0.25])
-
-    labels = rng.choice(NUM_CLASSES, size=n_samples, p=class_priors)
-    features = np.zeros((n_samples, INPUT_DIM))
-    for cls in range(NUM_CLASSES):
-        mask = labels == cls
-        features[mask] = rng.normal(class_means[cls], class_stds[cls], (mask.sum(), INPUT_DIM))
-
-    for i, name in enumerate(FEATURE_NAMES):
-        spec = FEATURE_SCHEMA[name]
-        features[:, i] = np.clip(features[:, i], spec["min"], spec["max"])
-
-    return features, labels
-
-
-def make_dataloaders(features, labels, seed, batch_size):
-    n = len(features)
-    n_val = int(n * 0.2)
-    indices = np.random.default_rng(seed).permutation(n)
-
-    def to_loader(idx, shuffle):
-        x = torch.tensor(features[idx], dtype=torch.float32)
-        y = torch.tensor(labels[idx], dtype=torch.long)
+def make_dataloaders(train_samples, val_samples, batch_size):
+    def to_tensor_loader(samples, shuffle):
+        images = np.stack([np.array(s["image"]).flatten() for s in samples]).astype(np.float32)
+        labels = np.array([s["label"] for s in samples], dtype=np.int64)
+        x = torch.tensor(images)
+        y = torch.tensor(labels)
         return DataLoader(TensorDataset(x, y), batch_size=batch_size, shuffle=shuffle)
 
-    return to_loader(indices[n_val:], True), to_loader(indices[:n_val], False)
+    return to_tensor_loader(train_samples, True), to_tensor_loader(val_samples, False)
 
 
 def export_onnx(model: Classifier, export_dir: str):
@@ -133,29 +103,28 @@ def export_onnx(model: Classifier, export_dir: str):
     return cls_dir, emb_dir
 
 
-def compute_reference_distributions(model, features, labels):
+def compute_reference_distributions(model, train_samples):
     model.eval()
-    x = torch.tensor(features, dtype=torch.float32)
+    images = np.stack([np.array(s["image"]).flatten() for s in train_samples]).astype(np.float32)
+    labels = np.array([s["label"] for s in train_samples], dtype=np.int64)
+
+    x = torch.tensor(images)
     with torch.no_grad():
         logits, embeddings = model(x)
     embeddings_np = embeddings.numpy()
     logits_np = logits.numpy()
 
-    feature_histograms = {}
-    for i, name in enumerate(FEATURE_NAMES):
-        col = features[:, i]
-        counts, bin_edges = np.histogram(col, bins=50)
-        feature_histograms[name] = {
-            "bin_edges": bin_edges.tolist(),
-            "counts": (counts / counts.sum()).tolist(),
-            "mean": float(col.mean()),
-            "std": float(col.std()),
-        }
+    pixel_statistics = {
+        "mean": float(images.mean()),
+        "std": float(images.std()),
+    }
 
     class_gaussians = {}
     for cls in range(NUM_CLASSES):
         mask = labels == cls
         cls_emb = embeddings_np[mask]
+        if len(cls_emb) == 0:
+            continue
         mean = cls_emb.mean(axis=0)
         cov = np.cov(cls_emb.T) + np.eye(EMBEDDING_DIM) * 1e-6
         class_gaussians[str(cls)] = {
@@ -169,8 +138,8 @@ def compute_reference_distributions(model, features, labels):
 
     return {
         "reference_distribution": {
-            "num_samples": len(features),
-            "feature_histograms": feature_histograms,
+            "num_samples": len(images),
+            "pixel_statistics": pixel_statistics,
             "embedding_mean": embeddings_np.mean(axis=0).tolist(),
             "embedding_cov": np.cov(embeddings_np.T).tolist(),
             "prediction_class_frequencies": pred_freq.tolist(),
@@ -182,9 +151,16 @@ def compute_reference_distributions(model, features, labels):
 def main():
     pl.seed_everything(SEED, workers=True)
 
-    features, labels = generate_synthetic_data(5000, SEED)
-    train_loader, val_loader = make_dataloaders(features, labels, SEED, BATCH_SIZE)
-    logger.info(f"Dataset: {len(features)} samples, {NUM_CLASSES} classes, {INPUT_DIM} features")
+    logger.info("Loading dataset from DatasetController...")
+    dataset_ctrl = DatasetController()
+    train_samples = dataset_ctrl.get_dataset_split("train")
+    val_samples = dataset_ctrl.get_dataset_split("val")
+    logger.info(
+        f"Dataset: {len(train_samples)} train, {len(val_samples)} val, "
+        f"{NUM_CLASSES} classes, {INPUT_DIM} input_dim"
+    )
+
+    train_loader, val_loader = make_dataloaders(train_samples, val_samples, BATCH_SIZE)
 
     model = Classifier(
         input_dim=INPUT_DIM, embedding_dim=EMBEDDING_DIM, num_classes=NUM_CLASSES, lr=LR
@@ -214,6 +190,8 @@ def main():
                 "batch_size": BATCH_SIZE,
                 "max_epochs": MAX_EPOCHS,
                 "seed": SEED,
+                "train_samples": len(train_samples),
+                "val_samples": len(val_samples),
             },
         )
 
@@ -236,7 +214,7 @@ def main():
             controller.log_artifacts(run_id, emb_dir, MLFLOW_PATH_EMBEDDER)
 
             # ── Reference distributions ──
-            refs = compute_reference_distributions(model, features, labels)
+            refs = compute_reference_distributions(model, train_samples)
 
             ref_path = os.path.join(tmpdir, REFERENCE_DIST_FILENAME)
             with open(ref_path, "w") as f:
@@ -250,7 +228,7 @@ def main():
 
             schema_path = os.path.join(tmpdir, FEATURE_SCHEMA_FILENAME)
             with open(schema_path, "w") as f:
-                json.dump(FEATURE_SCHEMA, f, indent=2)
+                json.dump({"image_size": [14, 14], "num_classes": NUM_CLASSES, "input_dim": INPUT_DIM}, f, indent=2)
             controller.log_artifact(run_id, schema_path)
 
         # ── Register model ──

@@ -9,7 +9,7 @@ class InferenceEvent(BaseModel):
     timestamp: datetime
     model_version: str
     request_id: str
-    features: dict[str, float]
+    image: list[list[float]]
     embedding: list[float]
     prediction: int
     confidence: float

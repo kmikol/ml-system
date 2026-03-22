@@ -77,6 +77,8 @@ help: ## Show this help
 #   localhost:3000  →  30002  →  grafana
 #   localhost:9090  →  30003  →  prometheus
 #   localhost:9001  →  30004  →  minio console
+#   localhost:5432  →  30005  →  postgres
+#   localhost:9000  →  30006  →  minio API
 #
 # Workflow:
 #   1. make k3d.create     ← one-time cluster setup
@@ -114,6 +116,8 @@ k3d.create: ## Create k3d cluster with port mappings
 	@echo "    localhost:3000  →  NodePort 30002  (grafana)"
 	@echo "    localhost:9090  →  NodePort 30003  (prometheus)"
 	@echo "    localhost:9001  →  NodePort 30004  (minio console)"
+	@echo "    localhost:5432  →  NodePort 30005  (postgres)"
+	@echo "    localhost:9000  →  NodePort 30006  (minio API)"
 	@echo ""
 	k3d cluster create $(K3D_CLUSTER) \
 		--port "8000:30000@server:0" \
@@ -121,6 +125,8 @@ k3d.create: ## Create k3d cluster with port mappings
 		--port "3000:30002@server:0" \
 		--port "9090:30003@server:0" \
 		--port "9001:30004@server:0" \
+		--port "5432:30005@server:0" \
+		--port "9000:30006@server:0" \
 		--k3s-arg "--disable=traefik@server:0"
 	kubectl create namespace $(K8S_NAMESPACE) --dry-run=client -o yaml | kubectl apply -f -
 	kubectl config set-context --current --namespace=$(K8S_NAMESPACE)
@@ -128,6 +134,7 @@ k3d.create: ## Create k3d cluster with port mappings
 	@echo "$(GREEN)Cluster ready.$(RESET)"
 	@echo ""
 	@echo "  Next: make k3d.build && make k3d.import && make k3d.deploy"
+
 
 k3d.delete: ## Delete k3d cluster and all its data
 	k3d cluster delete $(K3D_CLUSTER)
@@ -171,6 +178,8 @@ k3d.status: ## Show pods, services, and endpoints
 	@echo "  Grafana:       http://localhost:3000  (admin/admin)"
 	@echo "  Prometheus:    http://localhost:9090"
 	@echo "  MinIO console: http://localhost:9001  (minioadmin/minioadmin)"
+	@echo "  MinIO API:     http://localhost:9000  (minioadmin/minioadmin)"
+	@echo "  Postgres:      localhost:5432         (mlflow/mlflow, db=mlflow)"
 
 k3d.logs: ## Tail logs for a deployment (POD=fastapi-serving)
 	@if [ -z "$(POD)" ]; then \
@@ -217,6 +226,9 @@ k3d.train: ## Build training image, run training job in k3d, stream logs, clean 
 		--env="MLFLOW_S3_ENDPOINT_URL=http://minio:9000" \
 		--env="AWS_ACCESS_KEY_ID=minioadmin" \
 		--env="AWS_SECRET_ACCESS_KEY=minioadmin" \
+		--env="DATA_CONTROLLER_DB_URL=postgresql://mlflow:mlflow@postgres:5432/mlflow" \
+		--env="DATASET_S3_ENDPOINT_URL=http://minio:9000" \
+		--env="DATASET_BUCKET=mnist-dataset" \
 		--env="MODEL_NAME=ml_system_model" \
 		--env="TRAINING_MAX_EPOCHS=20" \
 		--env="TRAINING_SEED=42" \
@@ -253,13 +265,50 @@ build.mlflow: ## Build mlflow image
 	$(COMPOSE) build mlflow
 
 # ═══════════════════════════════════════════════════════════════
+# DATASET (MNIST)
+#
+# Requires k3d cluster running (make k3d.redeploy).
+# Postgres and MinIO are exposed as NodePorts so local scripts
+# connect directly: localhost:5432 (postgres), localhost:9000 (minio API).
+#
+# Workflow:
+#   1. make data.prepare        ← download + resize MNIST locally
+#   2. make data.seed           ← upload v0 split to k3d Postgres + MinIO
+#   3. make data.verify         ← check counts + pixel round-trip
+#
+# Or in one shot (after k3d.redeploy): make data.setup
+# ═══════════════════════════════════════════════════════════════
+
+_LOCAL_DB  := postgresql://mlflow:mlflow@localhost:5432/mlflow
+_LOCAL_S3  := http://localhost:9000
+_DATASET   := mnist-dataset
+_MINIO_KEY := minioadmin
+_DATA_ENV  := DATA_CONTROLLER_DB_URL=$(_LOCAL_DB) DATASET_S3_ENDPOINT_URL=$(_LOCAL_S3) DATASET_BUCKET=$(_DATASET) AWS_ACCESS_KEY_ID=$(_MINIO_KEY) AWS_SECRET_ACCESS_KEY=$(_MINIO_KEY)
+
+.PHONY: data.prepare data.seed data.verify data.setup data.inspect.training
+
+data.prepare: ## Download MNIST, resize 14x14, partition 10%/90% into data/
+	PYTHONPATH=. python scripts/prepare_mnist.py
+
+data.seed: ## Seed v0 dataset into k3d Postgres + MinIO (requires k3d running)
+	$(_DATA_ENV) PYTHONPATH=. python scripts/seed_dataset.py
+
+data.verify: ## Verify dataset counts in Postgres and pixel round-trip with MinIO
+	$(_DATA_ENV) PYTHONPATH=. python scripts/verify_dataset.py
+
+data.setup: data.prepare data.seed data.verify ## Full pipeline: prepare → seed → verify
+
+data.inspect.training: ## Plot 4x4 grid of random training images with labels
+	$(_DATA_ENV) PYTHONPATH=. python scripts/inspect_dataset.py --split train
+
+# ═══════════════════════════════════════════════════════════════
 # TRAINING
 # ═══════════════════════════════════════════════════════════════
 
 .PHONY: train.local
 
-train.local: ## Train model locally (requires MLflow on localhost:5000 via k3d)
-	PYTHONPATH=. python -m training.main
+train.local: ## Train MNIST model locally against k3d Postgres, MinIO, and MLflow
+	$(_DATA_ENV) MLFLOW_TRACKING_URI=http://localhost:5000 PYTHONPATH=. python -m training.main
 
 # ═══════════════════════════════════════════════════════════════
 # TESTING + DEBUG
@@ -286,9 +335,10 @@ serve.test: ## Smoke test against running serving (works with compose or k3d)
 	@echo "$(CYAN)Health:$(RESET)"
 	@curl -s http://localhost:8000/health | python3 -m json.tool
 	@echo "\n$(CYAN)Predict:$(RESET)"
-	@curl -s -X POST http://localhost:8000/predict \
+	@python3 -c "import json; print(json.dumps({'image': [[0.0]*14 for _ in range(14)]}))" \
+		| curl -s -X POST http://localhost:8000/predict \
 		-H "Content-Type: application/json" \
-		-d '{"features": {"age": 35, "income": 55000, "credit_score": 720, "debt_ratio": 1.2, "num_accounts": 5}}' \
+		-d @- \
 		| python3 -m json.tool
 
 serve.test.load: ## Send requests with ramp-up/down (RATE=5 DURATION=60 RAMP_UP=0 RAMP_DOWN=0)

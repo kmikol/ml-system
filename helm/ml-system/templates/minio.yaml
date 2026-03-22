@@ -113,6 +113,7 @@ spec:
               mc mb --ignore-existing local/mlflow-artifacts
               mc mb --ignore-existing local/dvc-data
               mc mb --ignore-existing local/argo-artifacts
+              mc mb --ignore-existing local/mnist-dataset
               echo "Buckets ready."
 ---
 apiVersion: v1
@@ -126,6 +127,9 @@ spec:
     - port: 9000
       targetPort: 9000
       name: api
+      {{- if .Values.minio.service.apiNodePort }}
+      nodePort: {{ .Values.minio.service.apiNodePort }}
+      {{- end }}
     - port: 9001
       targetPort: 9001
       name: console

@@ -61,7 +61,7 @@ services:
   mlflow:
     build:
       context: .
-      dockerfile: mlflow/Dockerfile
+      dockerfile: shared/model_artifact_controller/mlflow/Dockerfile
     depends_on:
       postgres:
         condition: service_healthy

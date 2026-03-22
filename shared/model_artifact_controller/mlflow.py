@@ -1,80 +1,15 @@
-# shared/model_artifact_controller.py
-"""
-Model artifact controller — the single point of contact between the rest of
-the system and the model storage backend (currently MLflow).
-
-No other module should import mlflow directly. They should instantiate
-MLflowModelArtifactController (or any future alternative) and call through
-the ModelArtifactController Protocol.
-"""
+# shared/model_artifact_controller/mlflow.py
+"""MLflowModelArtifactController — MLflow backend for model artifact storage."""
 
 from __future__ import annotations
 
 from collections.abc import Generator
-from contextlib import AbstractContextManager, contextmanager
-from typing import Any, Protocol
+from contextlib import contextmanager
+from typing import Any
 
 from shared.artifact_paths import MLFLOW_PATH_CLASSIFIER
 from shared.config import require_env
-
-
-class ModelArtifactError(Exception):
-    """Raised when any model artifact operation fails.
-
-    No mlflow exception types escape this module — all failures are wrapped
-    in this single type so callers write ``except ModelArtifactError`` instead
-    of importing mlflow error classes.
-    """
-
-
-class ModelArtifactController(Protocol):
-    """Interface for model artifact storage operations.
-
-    Write new backend implementations as classes that satisfy this Protocol.
-    Nothing else in the codebase needs to change.
-    """
-
-    def start_run(self, experiment_name: str) -> AbstractContextManager[str]:
-        """Context manager that starts a tracked run and yields its run_id."""
-        ...
-
-    def log_params(self, run_id: str, params: dict[str, Any]) -> None:
-        """Log hyperparameters or other key/value metadata to a run."""
-        ...
-
-    def log_metrics(self, run_id: str, metrics: dict[str, float]) -> None:
-        """Log numeric evaluation metrics to a run."""
-        ...
-
-    def log_artifact(self, run_id: str, local_path: str, artifact_path: str | None = None) -> None:
-        """Upload a single file to a run's artifact store."""
-        ...
-
-    def log_artifacts(self, run_id: str, local_dir: str, artifact_path: str | None = None) -> None:
-        """Upload all files in a directory to a run's artifact store."""
-        ...
-
-    def register_model(self, run_id: str, model_name: str) -> str:
-        """Register artifacts from *run_id* under *model_name* and return the version string."""
-        ...
-
-    def promote_model(self, model_name: str, version: str) -> None:
-        """Mark *version* of *model_name* as the production model."""
-        ...
-
-    def get_production_run_id(self, model_name: str, stage: str) -> str:
-        """Return the run_id for the current *stage* version of *model_name*.
-
-        Raises ModelArtifactError if no version is in that stage.
-        """
-        ...
-
-    def download_artifacts(self, run_id: str, artifact_path: str, local_dir: str) -> str:
-        """Download the artifact subtree at *artifact_path* to *local_dir*.
-
-        Returns the path to the downloaded root directory.
-        """
-        ...
+from shared.model_artifact_controller._protocol import ModelArtifactError
 
 
 class MLflowModelArtifactController:

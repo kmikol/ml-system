@@ -358,12 +358,15 @@ train.local: ## Train MNIST model locally against k3d Postgres, MinIO, and MLflo
 # TESTING + DEBUG
 # ═══════════════════════════════════════════════════════════════
 
-.PHONY: test test.unit lint lint.fix format serve.test serve.test.load mlflow.debug mlflow.ui minio.ui clean.pyc
+.PHONY: test test.unit test.integration lint lint.fix format serve.test serve.test.load mlflow.debug mlflow.ui minio.ui clean.pyc
 
 test: test.unit ## Run all tests
 
 test.unit: ## Run unit tests
-	PYTHONPATH=. python -m pytest tests/unit/ -v
+	PYTHONPATH=. python -m pytest tests/unit/ shared/data_controller/tests/unit/ shared/model_artifact_controller/tests/unit/ -v
+
+test.integration: ## Run integration tests
+	PYTHONPATH=. python -m pytest tests/integration/ shared/data_controller/tests/integration/ shared/model_artifact_controller/tests/integration/ -v
 
 lint: ## Check code with ruff (no changes)
 	ruff check .

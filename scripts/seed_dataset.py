@@ -33,7 +33,7 @@ import numpy as np
 # Project root on path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from shared.data_controller import DatasetController  # noqa: E402
+from shared.data_controller.dataset import DatasetController  # noqa: E402
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "v0")
 SPLITS = ["train", "val", "test"]

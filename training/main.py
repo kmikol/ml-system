@@ -24,8 +24,8 @@ from shared.artifact_paths import (
     REFERENCE_DIST_FILENAME,
 )
 from shared.config import require_env
-from shared.data_controller import DatasetController
-from shared.model_artifact_controller import MLflowModelArtifactController
+from shared.data_controller.dataset import DatasetController
+from shared.model_artifact_controller.mlflow import MLflowModelArtifactController
 from shared.schemas.feature_schema import (
     EMBEDDING_DIM,
     INPUT_DIM,

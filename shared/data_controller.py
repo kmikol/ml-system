@@ -183,6 +183,12 @@ class ServingDataController(_DataControllerBase):
             )
 
     def store_prediction(self, record: PredictRecord) -> None:
+        """Persist a prediction record to Postgres.
+
+        Fire-and-forget: if Postgres is unavailable or the write fails, the
+        error is logged as a warning and swallowed. Serving never raises due
+        to database issues.
+        """
         if not self._available:
             return
         try:

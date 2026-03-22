@@ -33,6 +33,8 @@ from shared.schemas.api import (
     PredictRequest, PredictResponse, HealthResponse, ValidationErrorResponse,
 )
 from shared.schemas.feature_schema import FEATURE_NAMES, INPUT_DIM
+from shared.schemas.predict_record import PredictRecord
+from shared.data_controller import ServingDataController
 from shared.validation import validate_features
 
 logging.basicConfig(level=logging.INFO)
@@ -161,6 +163,7 @@ class RedisPublisher:
 
 model_manager = ModelManager()
 redis_publisher = RedisPublisher()
+data_controller = ServingDataController()
 start_time = time.time()
 
 
@@ -224,6 +227,17 @@ async def predict(request: PredictRequest):
         model_version=model_manager.model_version,
         request_id=request_id,
     )
+
+    data_controller.store_prediction(PredictRecord(
+        prediction_id=request_id,
+        timestamp=datetime.now(timezone.utc),
+        model_version=model_manager.model_version,
+        features=request.features,
+        embedding=result["embedding"],
+        prediction=result["prediction"],
+        confidence=result["confidence"],
+        prediction_distribution=result["prediction_distribution"],
+    ))
 
     try:
         from shared.schemas.inference_event import InferenceEvent

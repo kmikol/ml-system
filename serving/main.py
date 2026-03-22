@@ -28,8 +28,9 @@ from shared.artifact_paths import (
     resolve_embedder_path,
 )
 from shared.config import require_env
-from shared.data_controller import ServingDataController
-from shared.model_artifact_controller import MLflowModelArtifactController, ModelArtifactError
+from shared.data_controller.serving import ServingDataController
+from shared.model_artifact_controller import ModelArtifactError
+from shared.model_artifact_controller.mlflow import MLflowModelArtifactController
 from shared.schemas.api import (
     HealthResponse,
     PredictRequest,

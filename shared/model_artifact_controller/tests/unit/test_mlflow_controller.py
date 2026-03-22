@@ -11,7 +11,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from shared.artifact_paths import MLFLOW_PATH_CLASSIFIER
-from shared.model_artifact_controller import MLflowModelArtifactController, ModelArtifactError
+from shared.model_artifact_controller import ModelArtifactError
+from shared.model_artifact_controller.mlflow import MLflowModelArtifactController
 
 
 @pytest.fixture

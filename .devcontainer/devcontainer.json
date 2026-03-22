@@ -27,6 +27,10 @@
 
     "initializeCommand": "docker network create ml-system_default 2>/dev/null || true",
 
+    "mounts": [
+        "source=/var/run/docker.sock,target=/var/run/docker.sock,type=bind"
+    ],
+
     "runArgs": [
         "--network", "ml-system_default"
     ],

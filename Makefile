@@ -14,6 +14,8 @@ IMG_SERVING  := ml-system-serving:latest
 IMG_TRAINING := ml-system-training:latest
 IMG_MLFLOW   := ml-system-mlflow:latest
 
+TEST_COMPOSE := docker compose -f docker-compose.test.yml
+
 CYAN   := \033[36m
 GREEN  := \033[32m
 YELLOW := \033[33m
@@ -358,12 +360,46 @@ train.local: ## Train MNIST model locally against k3d Postgres, MinIO, and MLflo
 # TESTING + DEBUG
 # ═══════════════════════════════════════════════════════════════
 
-.PHONY: test test.unit lint lint.fix format serve.test serve.test.load mlflow.debug mlflow.ui minio.ui clean.pyc
+.PHONY: test test.unit test.integration \
+        test.data_controller.unit test.data_controller.integration \
+        test.model_artifact_controller.unit test.model_artifact_controller.integration \
+        lint lint.fix format serve.test serve.test.load mlflow.debug mlflow.ui minio.ui clean.pyc
 
-test: test.unit ## Run all tests
+test: ## Run all tests (unit + integration) in Docker
+	$(TEST_COMPOSE) run --rm test; \
+	EXIT=$$?; \
+	$(TEST_COMPOSE) down -v; \
+	exit $$EXIT
 
-test.unit: ## Run unit tests
-	PYTHONPATH=. python -m pytest tests/unit/ -v
+test.unit: ## Run unit tests locally (no Docker needed)
+	PYTHONPATH=. python -m pytest tests/unit/ shared/data_controller/tests/unit/ shared/model_artifact_controller/tests/unit/ -v
+
+test.integration: ## Run integration tests in Docker
+	$(TEST_COMPOSE) run --rm test pytest \
+		shared/data_controller/tests/integration/ \
+		shared/model_artifact_controller/tests/integration/ \
+		-v; \
+	EXIT=$$?; \
+	$(TEST_COMPOSE) down -v; \
+	exit $$EXIT
+
+test.data_controller.unit: ## Run data_controller unit tests locally
+	PYTHONPATH=. python -m pytest shared/data_controller/tests/unit/ -v
+
+test.data_controller.integration: ## Run data_controller integration tests in Docker
+	$(TEST_COMPOSE) run --rm test pytest shared/data_controller/tests/integration/ -v; \
+	EXIT=$$?; \
+	$(TEST_COMPOSE) down -v; \
+	exit $$EXIT
+
+test.model_artifact_controller.unit: ## Run model_artifact_controller unit tests locally
+	PYTHONPATH=. python -m pytest shared/model_artifact_controller/tests/unit/ -v
+
+test.model_artifact_controller.integration: ## Run model_artifact_controller integration tests in Docker
+	$(TEST_COMPOSE) run --rm test pytest shared/model_artifact_controller/tests/integration/ -v; \
+	EXIT=$$?; \
+	$(TEST_COMPOSE) down -v; \
+	exit $$EXIT
 
 lint: ## Check code with ruff (no changes)
 	ruff check .

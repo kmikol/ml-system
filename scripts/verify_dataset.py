@@ -20,7 +20,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from shared.data_controller import DatasetController  # noqa: E402
+from shared.data_controller.dataset import DatasetController  # noqa: E402
 
 
 def main():

@@ -25,7 +25,7 @@ help: ## Show this help
 	@echo ""
 	@echo "$(CYAN)ML System$(RESET)"
 	@echo ""
-	@grep -E '^[a-zA-Z_.-]+:.*##' $(MAKEFILE_LIST) | \
+	@grep -E '^[a-zA-Z0-9_.-]+:.*##' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*##"}; {printf "  $(GREEN)%-22s$(RESET) %s\n", $$1, $$2}'
 	@echo ""
 
@@ -80,13 +80,21 @@ help: ## Show this help
 #   localhost:5432  →  30005  →  postgres
 #   localhost:9000  →  30006  →  minio API
 #
-# Workflow:
-#   1. make k3d.create     ← one-time cluster setup
-#   2. make k3d.build      ← build custom images via compose
-#   3. make k3d.import     ← push custom images into k3s's containerd
-#   4. make k3d.deploy     ← helm install/upgrade
-#   5. make k3d.status     ← verify pods are running
-#   6. make serve.test     ← smoke test
+# First-time setup (one command):
+#   make k3d.bootstrap     ← create cluster, install KEDA, build + import images,
+#                            deploy, seed dataset, train model, restart serving
+#
+# Workflow (step-by-step equivalent):
+#   1. make k3d.create          ← one-time cluster setup
+#   2. make k3d.keda.install    ← install KEDA (one-time)
+#   3. make k3d.build           ← build custom images via compose
+#   4. make k3d.import          ← push custom images into k3s's containerd
+#   5. make k3d.deploy          ← helm install/upgrade
+#   6. make data.setup          ← prepare + seed + verify dataset
+#   7. make k3d.train           ← train and register model
+#   8. make k3d.serve.restart   ← reload serving with trained model
+#   9. make k3d.status          ← verify pods are running
+#  10. make serve.test          ← smoke test
 #
 # When you change code:
 #   make k3d.build && make k3d.import && make k3d.deploy
@@ -95,7 +103,7 @@ help: ## Show this help
 #
 # ═══════════════════════════════════════════════════════════════
 
-.PHONY: k3d.create k3d.delete k3d.build k3d.import k3d.deploy k3d.status k3d.logs k3d.shell k3d.redeploy k3d.train k3d.serve.restart k3d.keda.install
+.PHONY: k3d.bootstrap k3d.create k3d.delete k3d.build k3d.import k3d.deploy k3d.status k3d.logs k3d.shell k3d.redeploy k3d.train k3d.serve.restart k3d.keda.install
 
 k3d.keda.install: ## Install KEDA into the cluster (run once after k3d.create)
 	@echo "$(CYAN)Installing KEDA...$(RESET)"
@@ -106,6 +114,41 @@ k3d.keda.install: ## Install KEDA into the cluster (run once after k3d.create)
 		--create-namespace \
 		--wait
 	@echo "$(GREEN)KEDA installed. Run 'make k3d.deploy' to apply the ScaledObject.$(RESET)"
+
+k3d.bootstrap: ## First-time setup: create cluster, install KEDA, build+import images, deploy, seed data, train, restart serving
+	@echo "$(CYAN)╔══════════════════════════════════════════════════════╗$(RESET)"
+	@echo "$(CYAN)║  k3d bootstrap - full first-time startup             ║$(RESET)"
+	@echo "$(CYAN)╚══════════════════════════════════════════════════════╝$(RESET)"
+	@echo ""
+	@echo "$(CYAN)[1/8] Creating k3d cluster...$(RESET)"
+	@$(MAKE) --no-print-directory k3d.create
+	@echo ""
+	@echo "$(CYAN)[2/8] Installing KEDA...$(RESET)"
+	@$(MAKE) --no-print-directory k3d.keda.install
+	@echo ""
+	@echo "$(CYAN)[3/8] Building Docker images...$(RESET)"
+	@$(MAKE) --no-print-directory k3d.build
+	@echo ""
+	@echo "$(CYAN)[4/8] Importing images into k3d...$(RESET)"
+	@$(MAKE) --no-print-directory k3d.import
+	@echo ""
+	@echo "$(CYAN)[5/8] Deploying services with Helm...$(RESET)"
+	@$(MAKE) --no-print-directory k3d.deploy
+	@echo ""
+	@echo "$(CYAN)[6/8] Setting up dataset (prepare → seed → verify)...$(RESET)"
+	@$(MAKE) --no-print-directory data.setup
+	@echo ""
+	@echo "$(CYAN)[7/8] Training model...$(RESET)"
+	@$(MAKE) --no-print-directory k3d.train
+	@echo ""
+	@echo "$(CYAN)[8/8] Restarting serving to load the trained model...$(RESET)"
+	@$(MAKE) --no-print-directory k3d.serve.restart
+	@echo ""
+	@echo "$(GREEN)╔══════════════════════════════════════════════════════╗$(RESET)"
+	@echo "$(GREEN)║  Bootstrap complete!                                 ║$(RESET)"
+	@echo "$(GREEN)╚══════════════════════════════════════════════════════╝$(RESET)"
+	@echo ""
+	@$(MAKE) --no-print-directory k3d.status
 
 k3d.create: ## Create k3d cluster with port mappings
 	@echo "$(CYAN)Creating k3d cluster '$(K3D_CLUSTER)'...$(RESET)"
@@ -133,7 +176,8 @@ k3d.create: ## Create k3d cluster with port mappings
 	@echo ""
 	@echo "$(GREEN)Cluster ready.$(RESET)"
 	@echo ""
-	@echo "  Next: make k3d.build && make k3d.import && make k3d.deploy"
+	@echo "  First-time setup: make k3d.keda.install && make k3d.build && make k3d.import && make k3d.deploy"
+	@echo "  Or run everything at once: make k3d.bootstrap"
 
 
 k3d.delete: ## Delete k3d cluster and all its data

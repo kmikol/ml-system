@@ -29,6 +29,7 @@ from shared.artifact_paths import (
 )
 from shared.config import require_env
 from shared.data_controller.serving import ServingDataController
+from shared.logging_config import setup_logging
 from shared.model_artifact_controller import ModelArtifactError
 from shared.model_artifact_controller.mlflow import MLflowModelArtifactController
 from shared.schemas.api import (
@@ -40,7 +41,7 @@ from shared.schemas.api import (
 from shared.schemas.predict_record import PredictRecord
 from shared.validation import validate_image
 
-logging.basicConfig(level=logging.INFO)
+setup_logging("serving")
 logger = logging.getLogger(__name__)
 
 # ── All config from env, no defaults ─────────────────────────────

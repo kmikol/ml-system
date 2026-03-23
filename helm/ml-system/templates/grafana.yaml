@@ -13,6 +13,14 @@ data:
         access: proxy
         url: http://prometheus:{{ .Values.prometheus.port }}
         isDefault: true
+  loki.yml: |
+    apiVersion: 1
+    datasources:
+      - name: Loki
+        type: loki
+        access: proxy
+        url: http://loki:{{ .Values.loki.port }}
+        isDefault: false
 ---
 apiVersion: v1
 kind: ConfigMap

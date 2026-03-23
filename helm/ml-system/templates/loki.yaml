@@ -1,0 +1,67 @@
+{{- if .Values.loki.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: loki-data
+  namespace: {{ .Values.global.namespace }}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: {{ .Values.loki.persistence.size }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: loki
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: loki
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: loki
+  template:
+    metadata:
+      labels:
+        app: loki
+    spec:
+      containers:
+        - name: loki
+          image: {{ .Values.loki.image }}
+          imagePullPolicy: IfNotPresent
+          args: ["-config.file=/etc/loki/local-config.yaml"]
+          ports:
+            - containerPort: {{ .Values.loki.port }}
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: {{ .Values.loki.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 12
+          volumeMounts:
+            - name: data
+              mountPath: /loki
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: loki-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: loki
+  namespace: {{ .Values.global.namespace }}
+spec:
+  type: {{ .Values.loki.service.type | default "ClusterIP" }}
+  ports:
+    - port: {{ .Values.loki.port }}
+      targetPort: {{ .Values.loki.port }}
+      {{- if .Values.loki.service.nodePort }}
+      nodePort: {{ .Values.loki.service.nodePort }}
+      {{- end }}
+  selector:
+    app: loki
+{{- end }}

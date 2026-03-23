@@ -1,6 +1,6 @@
 // Grafana Alloy configuration
 // Scrapes metrics from the serving service and remote-writes to Prometheus.
-// To add Loki log collection later, add a loki.source.* component here.
+// Also collects Docker container logs and forwards them to Loki.
 
 prometheus.scrape "serving" {
   targets = [
@@ -13,5 +13,32 @@ prometheus.scrape "serving" {
 prometheus.remote_write "local" {
   endpoint {
     url = "http://prometheus:9090/api/v1/write"
+  }
+}
+
+// ── Docker container log collection → Loki ───────────────────────────────────
+// Discover all running containers on the Docker host and attach service labels.
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+}
+
+discovery.relabel "container_logs" {
+  targets = discovery.docker.containers.targets
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "service"
+  }
+}
+
+loki.source.docker "containers" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.container_logs.output
+  forward_to = [loki.write.local.receiver]
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
   }
 }

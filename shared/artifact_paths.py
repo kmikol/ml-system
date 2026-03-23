@@ -62,17 +62,18 @@ def resolve_embedder_path(onnx_download_dir: str) -> str:
 
 
 def _dump_tree(root: str, expected: str):
-    """On failure, print what's actually on disk so debugging is immediate."""
-    import sys
+    """On failure, log what's actually on disk so debugging is immediate."""
+    import logging
 
-    print(f"\n  FATAL: Expected file '{expected}' not found in '{root}'", file=sys.stderr)
-    print("         Actual contents:", file=sys.stderr)
+    logger = logging.getLogger(__name__)
+    logger.error("Expected file '%s' not found in '%s'", expected, root)
+    logger.error("Actual contents:")
     for dirpath, _dirnames, filenames in os.walk(root):
         level = dirpath.replace(root, "").count(os.sep)
-        indent = "           " + "  " * level
-        print(f"{indent}{os.path.basename(dirpath)}/", file=sys.stderr)
+        indent = "  " * level
+        logger.error("%s%s/", indent, os.path.basename(dirpath))
         for f in filenames:
             fpath = os.path.join(dirpath, f)
             size = os.path.getsize(fpath)
-            print(f"{indent}  {f}  ({size} bytes)", file=sys.stderr)
+            logger.error("%s  %s  (%d bytes)", indent, f, size)
     raise FileNotFoundError(f"'{expected}' not found in '{root}'")

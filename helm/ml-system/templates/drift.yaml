@@ -1,0 +1,62 @@
+{{- if .Values.driftDetection.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: drift
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: drift
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: drift
+  template:
+    metadata:
+      labels:
+        app: drift
+    spec:
+      containers:
+        - name: drift
+          image: {{ .Values.driftDetection.image }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          ports:
+            - containerPort: {{ .Values.driftDetection.port }}
+          env:
+            {{- range $key, $val := .Values.driftDetection.env }}
+            - name: {{ $key }}
+              value: {{ $val | quote }}
+            {{- end }}
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: ml-system-secrets
+                  key: minio-access-key
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ml-system-secrets
+                  key: minio-secret-key
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.driftDetection.port }}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 12
+          resources:
+            {{- toYaml .Values.driftDetection.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: drift
+  namespace: {{ .Values.global.namespace }}
+spec:
+  type: {{ .Values.driftDetection.service.type | default "ClusterIP" }}
+  ports:
+    - port: {{ .Values.driftDetection.port }}
+      targetPort: {{ .Values.driftDetection.port }}
+  selector:
+    app: drift
+{{- end }}

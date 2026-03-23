@@ -42,3 +42,6 @@ minio:
     type: NodePort
     apiNodePort: 30006
     consoleNodePort: 30004
+
+driftDetection:
+  enabled: true

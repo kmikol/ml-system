@@ -14,6 +14,7 @@ IMG_SERVING    := ml-system-serving:latest
 IMG_TRAINING   := ml-system-training:latest
 IMG_MLFLOW     := ml-system-mlflow:latest
 IMG_ANNOTATION := ml-system-annotation:latest
+IMG_DRIFT      := ml-system-drift:latest
 
 TEST_COMPOSE := docker compose -f docker-compose.test.yml
 
@@ -90,7 +91,7 @@ help: ## Show this help
 # Workflow (step-by-step equivalent):
 #   1. make k3d.create          ← one-time cluster setup
 #   2. make k3d.keda.install    ← install KEDA (one-time)
-#   3. make k3d.build           ← build custom images via compose
+#   3. make k3d.build           ← build custom images with docker build
 #   4. make k3d.import          ← push custom images into k3s's containerd
 #   5. make k3d.deploy          ← helm install/upgrade
 #   6. make data.setup          ← prepare + seed + verify dataset
@@ -106,7 +107,7 @@ help: ## Show this help
 #
 # ═══════════════════════════════════════════════════════════════
 
-.PHONY: k3d.bootstrap k3d.create k3d.delete k3d.build k3d.import k3d.deploy k3d.status k3d.logs k3d.shell k3d.redeploy k3d.train k3d.annotate k3d.serve.restart k3d.keda.install
+.PHONY: k3d.bootstrap k3d.create k3d.delete k3d.build k3d.import k3d.deploy k3d.status k3d.logs k3d.shell k3d.redeploy k3d.train k3d.annotate k3d.serve.restart k3d.keda.install k3d.drift.restart
 
 k3d.keda.install: ## Install KEDA into the cluster (run once after k3d.create)
 	@echo "$(CYAN)Installing KEDA...$(RESET)"
@@ -187,7 +188,7 @@ k3d.delete: ## Delete k3d cluster and all its data
 	k3d cluster delete $(K3D_CLUSTER)
 	@echo "$(YELLOW)Cluster '$(K3D_CLUSTER)' deleted.$(RESET)"
 
-k3d.build: build ## Build all custom Docker images (serving, mlflow, training)
+k3d.build: build ## Build all custom Docker images (serving, mlflow, drift)
 	@echo "$(GREEN)Images built. Run 'make k3d.import' to load them into the cluster.$(RESET)"
 
 k3d.import: ## Import custom images into k3d's container runtime
@@ -198,6 +199,7 @@ k3d.import: ## Import custom images into k3d's container runtime
 	@echo ""
 	k3d image import $(IMG_SERVING) -c $(K3D_CLUSTER)
 	k3d image import $(IMG_MLFLOW) -c $(K3D_CLUSTER)
+	k3d image import $(IMG_DRIFT) -c $(K3D_CLUSTER)
 	@echo "$(GREEN)Images imported.$(RESET)"
 
 k3d.deploy: ## Deploy (or upgrade) all services with Helm
@@ -253,13 +255,19 @@ k3d.redeploy: k3d.build k3d.import k3d.deploy ## Rebuild, import, and redeploy (
 	@# Force rolling restart of deployments that use custom images.
 	@# Required because imagePullPolicy:Never + latest tag means k8s won't
 	@# detect that the image content changed after k3d image import.
-	kubectl rollout restart deployment/fastapi-serving deployment/mlflow -n $(K8S_NAMESPACE)
-	kubectl rollout status deployment/fastapi-serving deployment/mlflow -n $(K8S_NAMESPACE) --timeout=120s
+	kubectl rollout restart deployment/fastapi-serving deployment/mlflow deployment/grafana deployment/alloy -n $(K8S_NAMESPACE)
+	@kubectl get deployment drift -n $(K8S_NAMESPACE) &>/dev/null && \
+		kubectl rollout restart deployment/drift -n $(K8S_NAMESPACE) || true
+	kubectl rollout status deployment/fastapi-serving deployment/mlflow deployment/grafana deployment/alloy -n $(K8S_NAMESPACE) --timeout=120s
 	@echo "$(GREEN)Redeploy complete.$(RESET)"
+
+k3d.drift.restart: ## Restart drift detection pod
+	kubectl rollout restart deployment/drift -n $(K8S_NAMESPACE)
+	kubectl rollout status deployment/drift -n $(K8S_NAMESPACE) --timeout=60s
 
 k3d.train: ## Build training image, run training job in k3d, stream logs, clean up
 	@echo "$(CYAN)Building training image...$(RESET)"
-	$(COMPOSE) build training
+	docker build -t $(IMG_TRAINING) -f training/Dockerfile .
 	@echo "$(CYAN)Importing training image into k3d...$(RESET)"
 	k3d image import $(IMG_TRAINING) -c $(K3D_CLUSTER)
 	@# Delete any pod left over from a previous run.
@@ -319,19 +327,21 @@ k3d.annotate: ## Build annotation image, run annotation job in k3d, stream logs,
 # BUILD
 # ═══════════════════════════════════════════════════════════════
 
-.PHONY: build build.serving build.training build.mlflow
+.PHONY: build build.serving build.training build.mlflow build.drift
 
-build: ## Build all custom images (serving, mlflow, training)
-	$(COMPOSE) build serving mlflow training
+build: build.serving build.mlflow build.drift ## Build all custom images (serving, mlflow, drift)
 
 build.serving: ## Build serving image
-	$(COMPOSE) build serving
+	docker build -t $(IMG_SERVING) -f serving/Dockerfile .
 
 build.training: ## Build training image
-	$(COMPOSE) build training
+	docker build -t $(IMG_TRAINING) -f training/Dockerfile .
 
 build.mlflow: ## Build mlflow image
-	$(COMPOSE) build mlflow
+	docker build -t $(IMG_MLFLOW) -f shared/model_artifact_controller/mlflow/Dockerfile .
+
+build.drift: ## Build drift detection image
+	docker build -t $(IMG_DRIFT) -f monitoring/drift/Dockerfile .
 
 # ═══════════════════════════════════════════════════════════════
 # DATASET (MNIST)
@@ -386,7 +396,7 @@ train.local: ## Train MNIST model locally against k3d Postgres, MinIO, and MLflo
 .PHONY: test test.unit test.integration \
         test.data_controller.unit test.data_controller.integration \
         test.model_artifact_controller.unit test.model_artifact_controller.integration \
-        lint lint.fix format serve.test serve.test.load mlflow.debug mlflow.ui minio.ui clean.pyc
+        lint lint.fix format serve.test serve.test.load serve.test.drift mlflow.debug mlflow.ui minio.ui clean.pyc
 
 test: ## Run all tests (unit + integration) in Docker
 	$(TEST_COMPOSE) run --rm test; \
@@ -447,6 +457,10 @@ serve.test: ## Smoke test against running serving (works with compose or k3d)
 serve.test.load: ## Send requests with ramp-up/down (RATE=5 DURATION=60 RAMP_UP=0 RAMP_DOWN=0)
 	python3 scripts/load_test.py --rate $${RATE:-5} --duration $${DURATION:-60} \
 		--ramp-up $${RAMP_UP:-0} --ramp-down $${RAMP_DOWN:-0}
+
+serve.test.drift: ## Send inverted images with ramping probability (RATE=5 DURATION=120 INVERSION_PROB=1.0 RAMP=60)
+	python3 scripts/drift_test.py --rate $${RATE:-5} --duration $${DURATION:-120} \
+		--inversion-probability $${INVERSION_PROB:-1.0} --ramp $${RAMP:-60}
 
 mlflow.debug: ## Inspect MLflow artifacts and test ONNX loading
 	PYTHONPATH=. python debug_mlflow.py

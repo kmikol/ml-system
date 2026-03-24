@@ -17,6 +17,8 @@ class FakeDataController:
 
     def __init__(self) -> None:
         self._records: list[PredictRecord] = []
+        # Simulates the dataset_samples table: maps sample_id (UUID) → ground truth label.
+        self._dataset_labels: dict[str, int] = {}
 
     def store_prediction(self, record: PredictRecord) -> None:
         self._records.append(record.model_copy())
@@ -55,3 +57,21 @@ class FakeDataController:
             1 for r in self._records
             if r.label is not None and r.timestamp >= since
         )
+
+    def get_candidates(self, limit: int) -> list[tuple[str, int]]:
+        """Return up to *limit* candidate predictions that have a dataset label.
+
+        Simulates the JOIN between predictions and dataset_samples performed by
+        AnnotationDataController.get_candidates().  Only records whose
+        prediction_id appears in ``_dataset_labels`` are returned.
+        """
+        import random
+
+        candidates = [
+            (r.prediction_id, self._dataset_labels[r.prediction_id])
+            for r in self._records
+            if r.annotation_status == "candidate"
+            and r.prediction_id in self._dataset_labels
+        ]
+        random.shuffle(candidates)
+        return candidates[:limit]

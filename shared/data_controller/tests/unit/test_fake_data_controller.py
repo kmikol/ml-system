@@ -163,3 +163,48 @@ class TestCountLabelsSince:
         ctrl = FakeDataController()
         count = ctrl.count_labels_since(since=datetime(2026, 1, 1, tzinfo=UTC))
         assert count == 0
+
+
+# ── get_candidates ────────────────────────────────────────────────────────────
+
+
+class TestGetCandidates:
+    def test_returns_candidates_with_dataset_labels(self):
+        ctrl = FakeDataController()
+        ctrl.store_prediction(_record("p1", annotation_status="candidate"))
+        ctrl._dataset_labels["p1"] = 3
+
+        results = ctrl.get_candidates(limit=10)
+        assert results == [("p1", 3)]
+
+    def test_excludes_non_candidate_status(self):
+        ctrl = FakeDataController()
+        ctrl.store_prediction(_record("p1", annotation_status="none"))
+        ctrl.store_prediction(_record("p2", annotation_status="annotated"))
+        ctrl._dataset_labels["p1"] = 1
+        ctrl._dataset_labels["p2"] = 2
+
+        results = ctrl.get_candidates(limit=10)
+        assert results == []
+
+    def test_excludes_candidates_without_dataset_label(self):
+        ctrl = FakeDataController()
+        ctrl.store_prediction(_record("p1", annotation_status="candidate"))
+        # no entry in _dataset_labels for p1
+
+        results = ctrl.get_candidates(limit=10)
+        assert results == []
+
+    def test_respects_limit(self):
+        ctrl = FakeDataController()
+        for i in range(5):
+            ctrl.store_prediction(_record(f"p{i}", annotation_status="candidate"))
+            ctrl._dataset_labels[f"p{i}"] = i
+
+        results = ctrl.get_candidates(limit=3)
+        assert len(results) == 3
+
+    def test_returns_empty_when_no_candidates(self):
+        ctrl = FakeDataController()
+        results = ctrl.get_candidates(limit=10)
+        assert results == []

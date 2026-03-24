@@ -10,9 +10,10 @@ HELM_CHART    := helm/ml-system
 
 # Images built by compose — these names are what `docker compose build` produces.
 # k3d needs the exact image name:tag to import into its internal registry.
-IMG_SERVING  := ml-system-serving:latest
-IMG_TRAINING := ml-system-training:latest
-IMG_MLFLOW   := ml-system-mlflow:latest
+IMG_SERVING    := ml-system-serving:latest
+IMG_TRAINING   := ml-system-training:latest
+IMG_MLFLOW     := ml-system-mlflow:latest
+IMG_ANNOTATION := ml-system-annotation:latest
 
 TEST_COMPOSE := docker compose -f docker-compose.test.yml
 
@@ -105,7 +106,7 @@ help: ## Show this help
 #
 # ═══════════════════════════════════════════════════════════════
 
-.PHONY: k3d.bootstrap k3d.create k3d.delete k3d.build k3d.import k3d.deploy k3d.status k3d.logs k3d.shell k3d.redeploy k3d.train k3d.serve.restart k3d.keda.install
+.PHONY: k3d.bootstrap k3d.create k3d.delete k3d.build k3d.import k3d.deploy k3d.status k3d.logs k3d.shell k3d.redeploy k3d.train k3d.annotate k3d.serve.restart k3d.keda.install
 
 k3d.keda.install: ## Install KEDA into the cluster (run once after k3d.create)
 	@echo "$(CYAN)Installing KEDA...$(RESET)"
@@ -291,6 +292,28 @@ k3d.train: ## Build training image, run training job in k3d, stream logs, clean 
 k3d.serve.restart: ## Restart serving pod to immediately load the latest model from MLflow
 	kubectl rollout restart deployment/fastapi-serving -n $(K8S_NAMESPACE)
 	kubectl rollout status deployment/fastapi-serving -n $(K8S_NAMESPACE) --timeout=120s
+
+k3d.annotate: ## Build annotation image, run annotation job in k3d, stream logs, clean up
+	@echo "$(CYAN)Building annotation image...$(RESET)"
+	$(COMPOSE) build annotation
+	@echo "$(CYAN)Importing annotation image into k3d...$(RESET)"
+	k3d image import $(IMG_ANNOTATION) -c $(K3D_CLUSTER)
+	@# Delete any pod left over from a previous run.
+	kubectl delete pod annotation -n $(K8S_NAMESPACE) --ignore-not-found=true
+	@echo "$(CYAN)Starting annotation pod...$(RESET)"
+	kubectl run annotation \
+		--image=$(IMG_ANNOTATION) \
+		--restart=Never \
+		--image-pull-policy=Never \
+		--env="DATA_CONTROLLER_DB_URL=postgresql://mlflow:mlflow@postgres:5432/mlflow" \
+		--env="ANNOTATION_SAMPLES_PER_RUN=$${ANNOTATION_SAMPLES_PER_RUN:-10}" \
+		-n $(K8S_NAMESPACE)
+	@echo "$(CYAN)Waiting for pod to start...$(RESET)"
+	kubectl wait --for=condition=Ready pod/annotation -n $(K8S_NAMESPACE) --timeout=120s
+	@echo "$(CYAN)Streaming logs (Ctrl+C detaches but pod keeps running):$(RESET)"
+	kubectl logs -f annotation -n $(K8S_NAMESPACE)
+	kubectl delete pod annotation -n $(K8S_NAMESPACE) --ignore-not-found=true
+	@echo "$(GREEN)Annotation job complete.$(RESET)"
 
 # ═══════════════════════════════════════════════════════════════
 # BUILD

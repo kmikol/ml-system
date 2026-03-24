@@ -64,3 +64,23 @@ class ModelArtifactController(Protocol):
         Returns the path to the downloaded root directory.
         """
         ...
+
+    def log_training_outputs(
+        self,
+        run_id: str,
+        classifier_dir: str,
+        embedder_dir: str,
+        reference_distribution: dict[str, Any],
+        class_gaussians: dict[str, Any],
+        feature_schema: dict[str, Any],
+    ) -> None:
+        """Log canonical training outputs used by serving and drift callers."""
+        ...
+
+    def download_serving_bundle(self, run_id: str, local_dir: str) -> tuple[str, str, dict[str, Any] | None]:
+        """Return classifier path, embedder path, and optional class Gaussians payload."""
+        ...
+
+    def download_reference_distribution(self, run_id: str, local_dir: str) -> dict[str, Any]:
+        """Download and parse reference distribution payload for a run."""
+        ...

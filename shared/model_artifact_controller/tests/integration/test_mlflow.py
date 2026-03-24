@@ -16,9 +16,9 @@ from pathlib import Path
 import mlflow
 import pytest
 
-from shared.artifact_paths import MLFLOW_PATH_CLASSIFIER
 from shared.model_artifact_controller import ModelArtifactError
-from shared.model_artifact_controller.mlflow import MLflowModelArtifactController
+
+_MLFLOW_PATH_CLASSIFIER = "onnx/classifier"
 
 
 class _DummyModel(mlflow.pyfunc.PythonModel):
@@ -39,7 +39,7 @@ class TestStartRun:
 
     def test_creates_experiment_if_absent(self, ctrl):
         name = f"auto_created_{uuid.uuid4().hex[:8]}"
-        with ctrl.start_run(name) as run_id:
+        with ctrl.start_run(name):
             pass
         client = mlflow.tracking.MlflowClient()
         assert client.get_experiment_by_name(name) is not None
@@ -54,10 +54,9 @@ class TestStartRun:
     def test_run_is_failed_on_exception(self, ctrl, experiment_name):
         # start_run wraps non-ModelArtifactError exceptions, so capture run_id first
         captured = []
-        with pytest.raises(ModelArtifactError):
-            with ctrl.start_run(experiment_name) as run_id:
-                captured.append(run_id)
-                raise RuntimeError("deliberate failure")
+        with pytest.raises(ModelArtifactError), ctrl.start_run(experiment_name) as run_id:
+            captured.append(run_id)
+            raise RuntimeError("deliberate failure")
         client = mlflow.tracking.MlflowClient()
         run = client.get_run(captured[0])
         assert run.info.status == "FAILED"
@@ -139,7 +138,7 @@ class TestModelRegistry:
             # Use pyfunc.log_model so MLflow writes an MLmodel manifest, which
             # is required by register_model in MLflow >= 2.14.
             mlflow.pyfunc.log_model(
-                artifact_path=MLFLOW_PATH_CLASSIFIER,
+                artifact_path=_MLFLOW_PATH_CLASSIFIER,
                 python_model=_DummyModel(),
             )
 
@@ -194,6 +193,5 @@ class TestDownloadArtifacts:
     def test_download_nonexistent_artifact_raises(self, ctrl, experiment_name):
         with ctrl.start_run(experiment_name) as run_id:
             pass
-        with pytest.raises(ModelArtifactError):
-            with tempfile.TemporaryDirectory() as dst:
-                ctrl.download_artifacts(run_id, "does_not_exist", dst)
+        with pytest.raises(ModelArtifactError), tempfile.TemporaryDirectory() as dst:
+            ctrl.download_artifacts(run_id, "does_not_exist", dst)

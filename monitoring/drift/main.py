@@ -12,19 +12,17 @@ import math
 import tempfile
 import threading
 import time
-from contextlib import asynccontextmanager
 from collections import Counter
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from prometheus_client import Gauge, make_asgi_app
 
-from shared.artifact_paths import REFERENCE_DIST_FILENAME
 from shared.config import require_env
 from shared.data_controller.drift import DriftDataController
-from shared.model_artifact_controller import ModelArtifactError
-from shared.model_artifact_controller.mlflow import MLflowModelArtifactController
+from shared.model_artifact_controller import ModelArtifactController, ModelArtifactError
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -69,16 +67,13 @@ _last_poll_ts: float = 0.0
 _artifact_dir = tempfile.mkdtemp(prefix="ml_drift_")
 
 _data_controller = DriftDataController()
-_artifact_controller = MLflowModelArtifactController()
+_artifact_controller = ModelArtifactController()
 
 
 def _load_reference(run_id: str) -> list[float] | None:
     """Download reference_distribution.json and return prediction_class_frequencies."""
     try:
-        path = _artifact_controller.download_artifacts(run_id, REFERENCE_DIST_FILENAME, _artifact_dir)
-        import json
-        with open(path) as f:
-            data = json.load(f)
+        data = _artifact_controller.download_reference_distribution(run_id, _artifact_dir)
         freqs = data["prediction_class_frequencies"]
         logger.info(f"Reference distribution loaded from run {run_id}: {freqs}")
         return freqs
@@ -99,7 +94,7 @@ def _compute_psi(actual: list[float], reference: list[float]) -> float:
       PSI ≥ 0.25  → significant shift
     """
     psi = 0.0
-    for p_a, p_r in zip(actual, reference):
+    for p_a, p_r in zip(actual, reference, strict=True):
         psi += (p_a - p_r) * math.log((p_a + _EPS) / (p_r + _EPS))
     return psi
 

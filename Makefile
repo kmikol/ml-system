@@ -2,6 +2,12 @@
 SHELL := /bin/bash
 COMPOSE := docker compose
 
+# ── Project config — single source of truth ──────────────────────
+# All KEY=VALUE pairs from .env become Make variables here.
+# k3d.train, k3d.annotate, data.*, and serve.test.* targets use them
+# directly instead of hardcoding values inline.
+-include .env
+
 # ── k3d / Kubernetes config ──────────────────────────────────────
 K3D_CLUSTER   := ml-system
 K8S_NAMESPACE := ml-system
@@ -277,18 +283,18 @@ k3d.train: ## Build training image, run training job in k3d, stream logs, clean 
 		--image=$(IMG_TRAINING) \
 		--restart=Never \
 		--image-pull-policy=Never \
-		--env="MLFLOW_TRACKING_URI=http://mlflow:5000" \
-		--env="MLFLOW_S3_ENDPOINT_URL=http://minio:9000" \
-		--env="AWS_ACCESS_KEY_ID=minioadmin" \
-		--env="AWS_SECRET_ACCESS_KEY=minioadmin" \
-		--env="DATA_CONTROLLER_DB_URL=postgresql://mlflow:mlflow@postgres:5432/mlflow" \
-		--env="DATASET_S3_ENDPOINT_URL=http://minio:9000" \
-		--env="DATASET_BUCKET=mnist-dataset" \
-		--env="MODEL_NAME=ml_system_model" \
-		--env="TRAINING_MAX_EPOCHS=20" \
-		--env="TRAINING_SEED=42" \
-		--env="TRAINING_BATCH_SIZE=256" \
-		--env="TRAINING_LR=1e-3" \
+		--env="MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI)" \
+		--env="MLFLOW_S3_ENDPOINT_URL=$(MLFLOW_S3_ENDPOINT_URL)" \
+		--env="AWS_ACCESS_KEY_ID=$(AWS_ACCESS_KEY_ID)" \
+		--env="AWS_SECRET_ACCESS_KEY=$(AWS_SECRET_ACCESS_KEY)" \
+		--env="DATA_CONTROLLER_DB_URL=$(DATA_CONTROLLER_DB_URL)" \
+		--env="DATASET_S3_ENDPOINT_URL=$(MLFLOW_S3_ENDPOINT_URL)" \
+		--env="DATASET_BUCKET=$(DATASET_BUCKET)" \
+		--env="MODEL_NAME=$(MODEL_NAME)" \
+		--env="TRAINING_MAX_EPOCHS=$(TRAINING_MAX_EPOCHS)" \
+		--env="TRAINING_SEED=$(TRAINING_SEED)" \
+		--env="TRAINING_BATCH_SIZE=$(TRAINING_BATCH_SIZE)" \
+		--env="TRAINING_LR=$(TRAINING_LR)" \
 		-n $(K8S_NAMESPACE)
 	@echo "$(CYAN)Waiting for pod to start...$(RESET)"
 	kubectl wait --for=condition=Ready pod/training -n $(K8S_NAMESPACE) --timeout=120s
@@ -303,7 +309,7 @@ k3d.serve.restart: ## Restart serving pod to immediately load the latest model f
 
 k3d.annotate: ## Build annotation image, run annotation job in k3d, stream logs, clean up
 	@echo "$(CYAN)Building annotation image...$(RESET)"
-	$(COMPOSE) build annotation
+	docker build -t $(IMG_ANNOTATION) -f annotation/Dockerfile .
 	@echo "$(CYAN)Importing annotation image into k3d...$(RESET)"
 	k3d image import $(IMG_ANNOTATION) -c $(K3D_CLUSTER)
 	@# Delete any pod left over from a previous run.
@@ -313,7 +319,7 @@ k3d.annotate: ## Build annotation image, run annotation job in k3d, stream logs,
 		--image=$(IMG_ANNOTATION) \
 		--restart=Never \
 		--image-pull-policy=Never \
-		--env="DATA_CONTROLLER_DB_URL=postgresql://mlflow:mlflow@postgres:5432/mlflow" \
+		--env="DATA_CONTROLLER_DB_URL=$(DATA_CONTROLLER_DB_URL)" \
 		--env="ANNOTATION_SAMPLES_PER_RUN=$${ANNOTATION_SAMPLES_PER_RUN:-10}" \
 		-n $(K8S_NAMESPACE)
 	@echo "$(CYAN)Waiting for pod to start...$(RESET)"
@@ -358,11 +364,11 @@ build.drift: ## Build drift detection image
 # Or in one shot (after k3d.redeploy): make data.setup
 # ═══════════════════════════════════════════════════════════════
 
-_LOCAL_DB  := postgresql://mlflow:mlflow@localhost:5432/mlflow
+# Local-access URLs use localhost NodePorts instead of in-cluster DNS.
+# Credentials come from .env (included above).
+_LOCAL_DB  := postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@localhost:5432/$(POSTGRES_DB)
 _LOCAL_S3  := http://localhost:9000
-_DATASET   := mnist-dataset
-_MINIO_KEY := minioadmin
-_DATA_ENV  := DATA_CONTROLLER_DB_URL=$(_LOCAL_DB) DATASET_S3_ENDPOINT_URL=$(_LOCAL_S3) DATASET_BUCKET=$(_DATASET) AWS_ACCESS_KEY_ID=$(_MINIO_KEY) AWS_SECRET_ACCESS_KEY=$(_MINIO_KEY)
+_DATA_ENV  := DATA_CONTROLLER_DB_URL=$(_LOCAL_DB) DATASET_S3_ENDPOINT_URL=$(_LOCAL_S3) DATASET_BUCKET=$(DATASET_BUCKET) AWS_ACCESS_KEY_ID=$(AWS_ACCESS_KEY_ID) AWS_SECRET_ACCESS_KEY=$(AWS_SECRET_ACCESS_KEY)
 
 .PHONY: data.prepare data.seed data.verify data.setup data.inspect.training
 

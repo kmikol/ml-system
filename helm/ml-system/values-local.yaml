@@ -1,3 +1,11 @@
+# ── Helm overrides for local k3d development ──────────────────────────────────
+# This file is the single source of truth for Helm/Kubernetes config.
+#
+# Credentials, endpoints, and model params that appear in the env: sections
+# below intentionally mirror .env (the Makefile source of truth).
+# When you change a value, update BOTH files.
+# ──────────────────────────────────────────────────────────────────────────────
+
 global:
   # Never pull from registry — use images imported via `make k3d.import`.
   # Only applies to custom-built images (serving, mlflow).

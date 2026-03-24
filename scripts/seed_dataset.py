@@ -25,7 +25,6 @@ Usage:
 
 import os
 import sys
-import uuid
 from datetime import date
 
 import numpy as np
@@ -42,20 +41,21 @@ SPLITS = ["train", "val", "test"]
 def seed_split(ctrl: DatasetController, split: str, date_prefix: str) -> int:
     images_path = os.path.join(DATA_DIR, split, "images.npy")
     labels_path = os.path.join(DATA_DIR, split, "labels.npy")
+    uuids_path = os.path.join(DATA_DIR, split, "uuids.npy")
 
     if not os.path.exists(images_path):
         print(f"  [{split}] SKIP — {images_path} not found (run data.prepare first)")
         return 0
 
-    images = np.load(images_path)   # (N, 14, 14) float32
-    labels = np.load(labels_path)   # (N,) int64
+    images = np.load(images_path)         # (N, 14, 14) float32
+    labels = np.load(labels_path)         # (N,) int64
+    uuids = np.load(uuids_path)           # (N,) str — assigned at prepare time
 
     count = 0
-    for i, (img, label) in enumerate(zip(images, labels)):
-        sample_id = str(uuid.uuid4())
+    for i, (img, label, sample_id) in enumerate(zip(images, labels, uuids, strict=True)):
         minio_path = f"{date_prefix}/{sample_id}.npy"
         ctrl.store_sample(
-            sample_id=sample_id,
+            sample_id=str(sample_id),
             split=split,
             label=int(label),
             image_2d=img.tolist(),

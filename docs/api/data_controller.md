@@ -4,6 +4,11 @@ Facade that hides **Postgres** and **MinIO S3** from the rest of the system. Ser
 
 All database errors are wrapped in `DataControllerError` so callers only need to handle one exception type.
 
+Scope boundary:
+- Owns operational data only (prediction records, labels, dataset samples).
+- Does **not** own MLflow model artifact paths, model bundle resolution, or model registry lookups.
+- Callers must use the Model Artifact Controller for model-related retrieval and publication.
+
 ## shared.data_controller
 
 ::: shared.data_controller

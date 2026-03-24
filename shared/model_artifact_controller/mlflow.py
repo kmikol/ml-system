@@ -3,13 +3,25 @@
 
 from __future__ import annotations
 
+import json
+import os
+import tempfile
 from collections.abc import Generator
 from contextlib import contextmanager
 from typing import Any
 
-from shared.artifact_paths import MLFLOW_PATH_CLASSIFIER
 from shared.config import require_env
 from shared.model_artifact_controller._protocol import ModelArtifactError
+
+_ONNX_ROOT = "onnx"
+_CLASSIFIER_DIR = "classifier"
+_EMBEDDER_DIR = "embedder"
+_ONNX_FILENAME = "model.onnx"
+_MLFLOW_PATH_CLASSIFIER = f"{_ONNX_ROOT}/{_CLASSIFIER_DIR}"
+_MLFLOW_PATH_EMBEDDER = f"{_ONNX_ROOT}/{_EMBEDDER_DIR}"
+_REFERENCE_DIST_FILENAME = "reference_distribution.json"
+_CLASS_GAUSSIANS_FILENAME = "class_gaussians.json"
+_FEATURE_SCHEMA_FILENAME = "feature_schema.json"
 
 
 class MLflowModelArtifactController:
@@ -95,15 +107,92 @@ class MLflowModelArtifactController:
                 f"Failed to log artifacts from '{local_dir}' to run '{run_id}': {exc}"
             ) from exc
 
+    def log_training_outputs(
+        self,
+        run_id: str,
+        classifier_dir: str,
+        embedder_dir: str,
+        reference_distribution: dict[str, Any],
+        class_gaussians: dict[str, Any],
+        feature_schema: dict[str, Any],
+    ) -> None:
+        """Log canonical training artifacts without leaking path contracts to callers."""
+        self.log_artifacts(run_id, classifier_dir, _MLFLOW_PATH_CLASSIFIER)
+        self.log_artifacts(run_id, embedder_dir, _MLFLOW_PATH_EMBEDDER)
+
+        with tempfile.TemporaryDirectory(prefix="mlflow_meta_") as tmpdir:
+            ref_path = os.path.join(tmpdir, _REFERENCE_DIST_FILENAME)
+            with open(ref_path, "w") as f:
+                json.dump(reference_distribution, f)
+            self.log_artifact(run_id, ref_path)
+
+            gauss_path = os.path.join(tmpdir, _CLASS_GAUSSIANS_FILENAME)
+            with open(gauss_path, "w") as f:
+                json.dump(class_gaussians, f)
+            self.log_artifact(run_id, gauss_path)
+
+            schema_path = os.path.join(tmpdir, _FEATURE_SCHEMA_FILENAME)
+            with open(schema_path, "w") as f:
+                json.dump(feature_schema, f, indent=2)
+            self.log_artifact(run_id, schema_path)
+
+    def download_serving_bundle(self, run_id: str, local_dir: str) -> tuple[str, str, dict[str, Any] | None]:
+        """Return local classifier path, embedder path, and optional class Gaussians payload."""
+        onnx_dir = self.download_artifacts(run_id, _ONNX_ROOT, local_dir)
+        classifier_path = self._resolve_onnx_path(onnx_dir, _CLASSIFIER_DIR)
+        embedder_path = self._resolve_onnx_path(onnx_dir, _EMBEDDER_DIR)
+
+        class_gaussians = None
+        try:
+            gauss_path = self.download_artifacts(run_id, _CLASS_GAUSSIANS_FILENAME, local_dir)
+            with open(gauss_path) as f:
+                class_gaussians = json.load(f)
+        except Exception:
+            class_gaussians = None
+
+        return classifier_path, embedder_path, class_gaussians
+
+    def download_reference_distribution(self, run_id: str, local_dir: str) -> dict[str, Any]:
+        """Download and parse the canonical reference distribution JSON for a run."""
+        try:
+            path = self.download_artifacts(run_id, _REFERENCE_DIST_FILENAME, local_dir)
+            with open(path) as f:
+                return json.load(f)
+        except Exception as exc:
+            raise ModelArtifactError(
+                f"Failed to load reference distribution from run '{run_id}': {exc}"
+            ) from exc
+
+    def _resolve_onnx_path(self, onnx_download_dir: str, subdir: str) -> str:
+        path = os.path.join(onnx_download_dir, subdir, _ONNX_FILENAME)
+        if not os.path.isfile(path):
+            self._dump_tree(onnx_download_dir, f"{subdir}/{_ONNX_FILENAME}")
+        return path
+
+    def _dump_tree(self, root: str, expected: str) -> None:
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.error("Expected file '%s' not found in '%s'", expected, root)
+        logger.error("Actual contents:")
+        for dirpath, _dirnames, filenames in os.walk(root):
+            level = dirpath.replace(root, "").count(os.sep)
+            indent = "  " * level
+            logger.error("%s%s/", indent, os.path.basename(dirpath))
+            for filename in filenames:
+                fpath = os.path.join(dirpath, filename)
+                size = os.path.getsize(fpath)
+                logger.error("%s  %s  (%d bytes)", indent, filename, size)
+        raise FileNotFoundError(f"'{expected}' not found in '{root}'")
+
     def register_model(self, run_id: str, model_name: str) -> str:
         """Register the classifier ONNX artifact from *run_id* under *model_name*.
 
         The registered model URI points to the ``onnx/classifier`` subdirectory
-        of the run's artifacts — the canonical artifact path defined in
-        ``shared.artifact_paths``. Returns the version string assigned by MLflow.
+        of the run's artifacts. Returns the version string assigned by MLflow.
         """
         try:
-            uri = f"runs:/{run_id}/{MLFLOW_PATH_CLASSIFIER}"
+            uri = f"runs:/{run_id}/{_MLFLOW_PATH_CLASSIFIER}"
             result = self._mlflow.register_model(uri, model_name)
             return str(result.version)
         except Exception as exc:
@@ -112,17 +201,17 @@ class MLflowModelArtifactController:
             ) from exc
 
     def promote_model(self, model_name: str, version: str) -> None:
-        """Transition *version* of *model_name* to the ``Production`` stage.
+        """Set the ``Production`` alias on *version* of *model_name*.
 
-        All other versions of *model_name* are archived automatically
-        (``archive_existing_versions=True``).
+        Uses the MLflow aliases API (introduced in 2.9.0) instead of the
+        deprecated stages API. Only one version can hold the ``Production``
+        alias at a time — MLflow moves it automatically.
         """
         try:
-            self._client.transition_model_version_stage(
+            self._client.set_registered_model_alias(
                 name=model_name,
+                alias="Production",
                 version=version,
-                stage="Production",
-                archive_existing_versions=True,
             )
         except Exception as exc:
             raise ModelArtifactError(
@@ -130,17 +219,14 @@ class MLflowModelArtifactController:
             ) from exc
 
     def get_production_run_id(self, model_name: str, stage: str) -> str:
-        """Return the ``run_id`` for the version of *model_name* currently in *stage*.
+        """Return the ``run_id`` for the version of *model_name* with alias *stage*.
 
         Typical usage: ``stage="Production"``. Raises ``ModelArtifactError``
-        if no version of *model_name* is in that stage.
+        if no version of *model_name* carries that alias.
         """
         try:
-            versions = self._client.search_model_versions(f"name='{model_name}'")
-            prod = next((v for v in versions if v.current_stage == stage), None)
-            if prod is None:
-                raise ModelArtifactError(f"No model '{model_name}' in stage '{stage}'")
-            return prod.run_id
+            mv = self._client.get_model_version_by_alias(name=model_name, alias=stage)
+            return mv.run_id
         except ModelArtifactError:
             raise
         except Exception as exc:

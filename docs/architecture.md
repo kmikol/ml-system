@@ -57,6 +57,8 @@ Model Serving ──▶ Data Controller ──▶ Postgres (predictions with ann
 
 Two green-bordered facades isolate backend implementation details from the rest of the system.
 
+Boundary rule: Data Controller handles operational data (Postgres/MinIO), while Model Artifact Controller handles model artifact contracts (MLflow paths, model bundle lookup, registry alias resolution).
+
 ### Data Controller
 
 Hides **Postgres** (prediction records, dataset metadata) and **MinIO S3** (image bytes). Each service gets a role-scoped subclass:

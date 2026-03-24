@@ -4,10 +4,8 @@ Training pipeline: load MNIST from DatasetController → train → export ONNX �
 Usage: python -m training.main
 """
 
-import json
 import logging
 import os
-import tempfile
 
 import numpy as np
 import onnx
@@ -15,18 +13,10 @@ import pytorch_lightning as pl
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
-from shared.artifact_paths import (
-    CLASS_GAUSSIANS_FILENAME,
-    FEATURE_SCHEMA_FILENAME,
-    MLFLOW_PATH_CLASSIFIER,
-    MLFLOW_PATH_EMBEDDER,
-    ONNX_FILENAME,
-    REFERENCE_DIST_FILENAME,
-)
 from shared.config import require_env
 from shared.data_controller.dataset import DatasetController
 from shared.logging_config import setup_logging
-from shared.model_artifact_controller.mlflow import MLflowModelArtifactController
+from shared.model_artifact_controller import ModelArtifactController
 from shared.schemas.feature_schema import (
     EMBEDDING_DIM,
     INPUT_DIM,
@@ -43,6 +33,7 @@ MAX_EPOCHS = int(require_env("TRAINING_MAX_EPOCHS"))
 SEED = int(require_env("TRAINING_SEED"))
 BATCH_SIZE = int(require_env("TRAINING_BATCH_SIZE"))
 LR = float(require_env("TRAINING_LR"))
+ONNX_FILENAME = "model.onnx"
 
 
 def make_dataloaders(train_samples, val_samples, batch_size):
@@ -161,6 +152,12 @@ def main():
         f"{NUM_CLASSES} classes, {INPUT_DIM} input_dim"
     )
 
+    if not train_samples or not val_samples:
+        raise RuntimeError(
+            "Dataset split is empty. Expected non-empty 'train' and 'val' splits in the data "
+            "controller backend. Run dataset setup/seed before training."
+        )
+
     train_loader, val_loader = make_dataloaders(train_samples, val_samples, BATCH_SIZE)
 
     model = Classifier(
@@ -177,7 +174,7 @@ def main():
         deterministic=True,
     )
 
-    controller = MLflowModelArtifactController()
+    controller = ModelArtifactController()
     with controller.start_run("ml_system_training") as run_id:
         logger.info(f"Run ID: {run_id}")
 
@@ -208,29 +205,28 @@ def main():
             },
         )
 
+        # ── Export ONNX ──
+        import tempfile
+
         with tempfile.TemporaryDirectory() as tmpdir:
-            # ── Export ONNX ──
             cls_dir, emb_dir = export_onnx(model, tmpdir)
-            controller.log_artifacts(run_id, cls_dir, MLFLOW_PATH_CLASSIFIER)
-            controller.log_artifacts(run_id, emb_dir, MLFLOW_PATH_EMBEDDER)
 
             # ── Reference distributions ──
             refs = compute_reference_distributions(model, train_samples)
+            feature_schema = {
+                "image_size": [14, 14],
+                "num_classes": NUM_CLASSES,
+                "input_dim": INPUT_DIM,
+            }
 
-            ref_path = os.path.join(tmpdir, REFERENCE_DIST_FILENAME)
-            with open(ref_path, "w") as f:
-                json.dump(refs["reference_distribution"], f)
-            controller.log_artifact(run_id, ref_path)
-
-            gauss_path = os.path.join(tmpdir, CLASS_GAUSSIANS_FILENAME)
-            with open(gauss_path, "w") as f:
-                json.dump(refs["class_gaussians"], f)
-            controller.log_artifact(run_id, gauss_path)
-
-            schema_path = os.path.join(tmpdir, FEATURE_SCHEMA_FILENAME)
-            with open(schema_path, "w") as f:
-                json.dump({"image_size": [14, 14], "num_classes": NUM_CLASSES, "input_dim": INPUT_DIM}, f, indent=2)
-            controller.log_artifact(run_id, schema_path)
+            controller.log_training_outputs(
+                run_id=run_id,
+                classifier_dir=cls_dir,
+                embedder_dir=emb_dir,
+                reference_distribution=refs["reference_distribution"],
+                class_gaussians=refs["class_gaussians"],
+                feature_schema=feature_schema,
+            )
 
         # ── Register model ──
         version = controller.register_model(run_id, MODEL_NAME)

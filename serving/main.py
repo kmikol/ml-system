@@ -5,9 +5,7 @@ Usage: uvicorn serving.main:app --host 0.0.0.0 --port 8000
 """
 
 import asyncio
-import json
 import logging
-import os
 import tempfile
 import threading
 import time
@@ -23,17 +21,10 @@ from prometheus_client import Counter, Histogram
 from prometheus_fastapi_instrumentator import Instrumentator
 from scipy.special import softmax
 
-from shared.artifact_paths import (
-    CLASS_GAUSSIANS_FILENAME,
-    MLFLOW_PATH_ONNX_ROOT,
-    resolve_classifier_path,
-    resolve_embedder_path,
-)
 from shared.config import require_env
 from shared.data_controller.serving import ServingDataController
 from shared.logging_config import setup_logging
-from shared.model_artifact_controller import ModelArtifactError
-from shared.model_artifact_controller.mlflow import MLflowModelArtifactController
+from shared.model_artifact_controller import ModelArtifactController, ModelArtifactError
 from shared.schemas.api import (
     HealthResponse,
     PredictRequest,
@@ -77,10 +68,6 @@ _mahalanobis_histogram = Histogram(
     buckets=[20, 40, 60, 70, 80, 90, 100, 120, 150, 200, 500],
 )
 
-REDIS_URL = os.getenv("REDIS_URL", "")
-REDIS_STREAM_NAME = os.getenv("REDIS_STREAM_NAME", "inference_events")
-
-
 class ModelManager:
     def __init__(self):
         self.classifier_session: ort.InferenceSession | None = None
@@ -89,7 +76,7 @@ class ModelManager:
         self.model_version: str | None = None
         self._lock = threading.Lock()
         self._artifact_dir = tempfile.mkdtemp(prefix="ml_model_")
-        self._controller = MLflowModelArtifactController()
+        self._controller = ModelArtifactController()
 
     def load_from_mlflow(self) -> bool:
         try:
@@ -103,18 +90,13 @@ class ModelManager:
 
         logger.info(f"Downloading artifacts from run {run_id}...")
         try:
-            onnx_dir = self._controller.download_artifacts(
-                run_id, MLFLOW_PATH_ONNX_ROOT, self._artifact_dir
+            classifier_path, embedder_path, raw_gaussians = self._controller.download_serving_bundle(
+                run_id, self._artifact_dir
             )
         except ModelArtifactError as e:
             logger.error(str(e))
             return False
 
-        logger.info(f"Downloaded to: {onnx_dir}")
-
-        # Resolve paths (crashes with diagnostic dump if files missing)
-        classifier_path = resolve_classifier_path(onnx_dir)
-        embedder_path = resolve_embedder_path(onnx_dir)
         logger.info(f"Classifier: {classifier_path}")
         logger.info(f"Embedder:   {embedder_path}")
 
@@ -125,22 +107,20 @@ class ModelManager:
         new_emb = ort.InferenceSession(embedder_path, opts)
 
         new_gaussians = None
-        try:
-            gauss_path = self._controller.download_artifacts(
-                run_id, CLASS_GAUSSIANS_FILENAME, self._artifact_dir
-            )
-            with open(gauss_path) as f:
-                raw = json.load(f)
-            new_gaussians = {
-                cls_key: {
-                    "mean": np.array(g["mean"], dtype=np.float64),
-                    "precision": np.array(g["precision"], dtype=np.float64),
+        if raw_gaussians is not None:
+            try:
+                new_gaussians = {
+                    cls_key: {
+                        "mean": np.array(g["mean"], dtype=np.float64),
+                        "precision": np.array(g["precision"], dtype=np.float64),
+                    }
+                    for cls_key, g in raw_gaussians["classes"].items()
                 }
-                for cls_key, g in raw["classes"].items()
-            }
-            logger.info("class_gaussians loaded for Mahalanobis scoring.")
-        except Exception as e:
-            logger.warning(f"class_gaussians.json unavailable, Mahalanobis scoring disabled: {e}")
+                logger.info("class_gaussians loaded for Mahalanobis scoring.")
+            except Exception as e:
+                logger.warning(f"class_gaussians payload invalid, Mahalanobis scoring disabled: {e}")
+        else:
+            logger.info("class_gaussians unavailable, Mahalanobis scoring disabled.")
 
         with self._lock:
             self.classifier_session = new_cls
@@ -179,38 +159,7 @@ class ModelManager:
         return self.classifier_session is not None
 
 
-class RedisPublisher:
-    def __init__(self):
-        self._client = None
-        self._available = False
-        self._failures = 0
-
-    def connect(self):
-        try:
-            import redis
-
-            self._client = redis.from_url(REDIS_URL, socket_timeout=1)
-            self._client.ping()
-            self._available = True
-            logger.info(f"Redis connected: {REDIS_URL}")
-        except Exception as e:
-            logger.warning(f"Redis unavailable (serving continues without): {e}")
-            self._available = False
-
-    def publish(self, event_json: str):
-        if not self._available:
-            return
-        try:
-            self._client.xadd(
-                REDIS_STREAM_NAME, {"payload": event_json}, maxlen=100000, approximate=True
-            )
-        except Exception as e:
-            self._failures += 1
-            logger.warning(f"Redis publish failed ({self._failures} total): {e}")
-
-
 model_manager = ModelManager()
-redis_publisher = RedisPublisher()
 data_controller = ServingDataController()
 start_time = time.time()
 
@@ -234,7 +183,6 @@ async def lifespan(app: FastAPI):
     else:
         logger.error("Failed to load model after 5 attempts.")
 
-    redis_publisher.connect()
     threading.Thread(target=poll_model_registry, daemon=True).start()
     yield
     logger.info("Shutting down.")
@@ -299,24 +247,6 @@ async def predict(request: PredictRequest):
             prediction_distribution=result["prediction_distribution"],
         )
     )
-
-    try:
-        from shared.schemas.inference_event import InferenceEvent
-
-        event = InferenceEvent(
-            event_id=str(uuid.uuid4()),
-            timestamp=datetime.now(UTC),
-            model_version=model_manager.model_version,
-            request_id=request_id,
-            image=request.image,
-            embedding=result["embedding"],
-            prediction=result["prediction"],
-            confidence=result["confidence"],
-            prediction_distribution=result["prediction_distribution"],
-        )
-        redis_publisher.publish(event.model_dump_json())
-    except Exception as e:
-        logger.warning(f"Redis publish failed: {e}")
 
     return response
 

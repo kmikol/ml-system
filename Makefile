@@ -2,6 +2,12 @@
 SHELL := /bin/bash
 COMPOSE := docker compose
 
+# ── Project config — single source of truth ──────────────────────
+# All KEY=VALUE pairs from .env become Make variables here.
+# k3d.train, k3d.annotate, data.*, and serve.test.* targets use them
+# directly instead of hardcoding values inline.
+-include .env
+
 # ── k3d / Kubernetes config ──────────────────────────────────────
 K3D_CLUSTER   := ml-system
 K8S_NAMESPACE := ml-system
@@ -14,6 +20,7 @@ IMG_SERVING    := ml-system-serving:latest
 IMG_TRAINING   := ml-system-training:latest
 IMG_MLFLOW     := ml-system-mlflow:latest
 IMG_ANNOTATION := ml-system-annotation:latest
+IMG_DRIFT      := ml-system-drift:latest
 
 TEST_COMPOSE := docker compose -f docker-compose.test.yml
 
@@ -90,7 +97,7 @@ help: ## Show this help
 # Workflow (step-by-step equivalent):
 #   1. make k3d.create          ← one-time cluster setup
 #   2. make k3d.keda.install    ← install KEDA (one-time)
-#   3. make k3d.build           ← build custom images via compose
+#   3. make k3d.build           ← build custom images with docker build
 #   4. make k3d.import          ← push custom images into k3s's containerd
 #   5. make k3d.deploy          ← helm install/upgrade
 #   6. make data.setup          ← prepare + seed + verify dataset
@@ -106,7 +113,7 @@ help: ## Show this help
 #
 # ═══════════════════════════════════════════════════════════════
 
-.PHONY: k3d.bootstrap k3d.create k3d.delete k3d.build k3d.import k3d.deploy k3d.status k3d.logs k3d.shell k3d.redeploy k3d.train k3d.annotate k3d.serve.restart k3d.keda.install
+.PHONY: k3d.bootstrap k3d.create k3d.delete k3d.build k3d.import k3d.deploy k3d.status k3d.logs k3d.shell k3d.redeploy k3d.train k3d.annotate k3d.serve.restart k3d.keda.install k3d.drift.restart
 
 k3d.keda.install: ## Install KEDA into the cluster (run once after k3d.create)
 	@echo "$(CYAN)Installing KEDA...$(RESET)"
@@ -187,7 +194,7 @@ k3d.delete: ## Delete k3d cluster and all its data
 	k3d cluster delete $(K3D_CLUSTER)
 	@echo "$(YELLOW)Cluster '$(K3D_CLUSTER)' deleted.$(RESET)"
 
-k3d.build: build ## Build all custom Docker images (serving, mlflow, training)
+k3d.build: build ## Build all custom Docker images (serving, mlflow, drift)
 	@echo "$(GREEN)Images built. Run 'make k3d.import' to load them into the cluster.$(RESET)"
 
 k3d.import: ## Import custom images into k3d's container runtime
@@ -198,6 +205,7 @@ k3d.import: ## Import custom images into k3d's container runtime
 	@echo ""
 	k3d image import $(IMG_SERVING) -c $(K3D_CLUSTER)
 	k3d image import $(IMG_MLFLOW) -c $(K3D_CLUSTER)
+	k3d image import $(IMG_DRIFT) -c $(K3D_CLUSTER)
 	@echo "$(GREEN)Images imported.$(RESET)"
 
 k3d.deploy: ## Deploy (or upgrade) all services with Helm
@@ -253,13 +261,19 @@ k3d.redeploy: k3d.build k3d.import k3d.deploy ## Rebuild, import, and redeploy (
 	@# Force rolling restart of deployments that use custom images.
 	@# Required because imagePullPolicy:Never + latest tag means k8s won't
 	@# detect that the image content changed after k3d image import.
-	kubectl rollout restart deployment/fastapi-serving deployment/mlflow -n $(K8S_NAMESPACE)
-	kubectl rollout status deployment/fastapi-serving deployment/mlflow -n $(K8S_NAMESPACE) --timeout=120s
+	kubectl rollout restart deployment/fastapi-serving deployment/mlflow deployment/grafana deployment/alloy -n $(K8S_NAMESPACE)
+	@kubectl get deployment drift -n $(K8S_NAMESPACE) &>/dev/null && \
+		kubectl rollout restart deployment/drift -n $(K8S_NAMESPACE) || true
+	kubectl rollout status deployment/fastapi-serving deployment/mlflow deployment/grafana deployment/alloy -n $(K8S_NAMESPACE) --timeout=120s
 	@echo "$(GREEN)Redeploy complete.$(RESET)"
+
+k3d.drift.restart: ## Restart drift detection pod
+	kubectl rollout restart deployment/drift -n $(K8S_NAMESPACE)
+	kubectl rollout status deployment/drift -n $(K8S_NAMESPACE) --timeout=60s
 
 k3d.train: ## Build training image, run training job in k3d, stream logs, clean up
 	@echo "$(CYAN)Building training image...$(RESET)"
-	$(COMPOSE) build training
+	docker build -t $(IMG_TRAINING) -f training/Dockerfile .
 	@echo "$(CYAN)Importing training image into k3d...$(RESET)"
 	k3d image import $(IMG_TRAINING) -c $(K3D_CLUSTER)
 	@# Delete any pod left over from a previous run.
@@ -269,18 +283,18 @@ k3d.train: ## Build training image, run training job in k3d, stream logs, clean 
 		--image=$(IMG_TRAINING) \
 		--restart=Never \
 		--image-pull-policy=Never \
-		--env="MLFLOW_TRACKING_URI=http://mlflow:5000" \
-		--env="MLFLOW_S3_ENDPOINT_URL=http://minio:9000" \
-		--env="AWS_ACCESS_KEY_ID=minioadmin" \
-		--env="AWS_SECRET_ACCESS_KEY=minioadmin" \
-		--env="DATA_CONTROLLER_DB_URL=postgresql://mlflow:mlflow@postgres:5432/mlflow" \
-		--env="DATASET_S3_ENDPOINT_URL=http://minio:9000" \
-		--env="DATASET_BUCKET=mnist-dataset" \
-		--env="MODEL_NAME=ml_system_model" \
-		--env="TRAINING_MAX_EPOCHS=20" \
-		--env="TRAINING_SEED=42" \
-		--env="TRAINING_BATCH_SIZE=256" \
-		--env="TRAINING_LR=1e-3" \
+		--env="MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI)" \
+		--env="MLFLOW_S3_ENDPOINT_URL=$(MLFLOW_S3_ENDPOINT_URL)" \
+		--env="AWS_ACCESS_KEY_ID=$(AWS_ACCESS_KEY_ID)" \
+		--env="AWS_SECRET_ACCESS_KEY=$(AWS_SECRET_ACCESS_KEY)" \
+		--env="DATA_CONTROLLER_DB_URL=$(DATA_CONTROLLER_DB_URL)" \
+		--env="DATASET_S3_ENDPOINT_URL=$(MLFLOW_S3_ENDPOINT_URL)" \
+		--env="DATASET_BUCKET=$(DATASET_BUCKET)" \
+		--env="MODEL_NAME=$(MODEL_NAME)" \
+		--env="TRAINING_MAX_EPOCHS=$(TRAINING_MAX_EPOCHS)" \
+		--env="TRAINING_SEED=$(TRAINING_SEED)" \
+		--env="TRAINING_BATCH_SIZE=$(TRAINING_BATCH_SIZE)" \
+		--env="TRAINING_LR=$(TRAINING_LR)" \
 		-n $(K8S_NAMESPACE)
 	@echo "$(CYAN)Waiting for pod to start...$(RESET)"
 	kubectl wait --for=condition=Ready pod/training -n $(K8S_NAMESPACE) --timeout=120s
@@ -295,7 +309,7 @@ k3d.serve.restart: ## Restart serving pod to immediately load the latest model f
 
 k3d.annotate: ## Build annotation image, run annotation job in k3d, stream logs, clean up
 	@echo "$(CYAN)Building annotation image...$(RESET)"
-	$(COMPOSE) build annotation
+	docker build -t $(IMG_ANNOTATION) -f annotation/Dockerfile .
 	@echo "$(CYAN)Importing annotation image into k3d...$(RESET)"
 	k3d image import $(IMG_ANNOTATION) -c $(K3D_CLUSTER)
 	@# Delete any pod left over from a previous run.
@@ -305,7 +319,7 @@ k3d.annotate: ## Build annotation image, run annotation job in k3d, stream logs,
 		--image=$(IMG_ANNOTATION) \
 		--restart=Never \
 		--image-pull-policy=Never \
-		--env="DATA_CONTROLLER_DB_URL=postgresql://mlflow:mlflow@postgres:5432/mlflow" \
+		--env="DATA_CONTROLLER_DB_URL=$(DATA_CONTROLLER_DB_URL)" \
 		--env="ANNOTATION_SAMPLES_PER_RUN=$${ANNOTATION_SAMPLES_PER_RUN:-10}" \
 		-n $(K8S_NAMESPACE)
 	@echo "$(CYAN)Waiting for pod to start...$(RESET)"
@@ -319,19 +333,21 @@ k3d.annotate: ## Build annotation image, run annotation job in k3d, stream logs,
 # BUILD
 # ═══════════════════════════════════════════════════════════════
 
-.PHONY: build build.serving build.training build.mlflow
+.PHONY: build build.serving build.training build.mlflow build.drift
 
-build: ## Build all custom images (serving, mlflow, training)
-	$(COMPOSE) build serving mlflow training
+build: build.serving build.mlflow build.drift ## Build all custom images (serving, mlflow, drift)
 
 build.serving: ## Build serving image
-	$(COMPOSE) build serving
+	docker build -t $(IMG_SERVING) -f serving/Dockerfile .
 
 build.training: ## Build training image
-	$(COMPOSE) build training
+	docker build -t $(IMG_TRAINING) -f training/Dockerfile .
 
 build.mlflow: ## Build mlflow image
-	$(COMPOSE) build mlflow
+	docker build -t $(IMG_MLFLOW) -f shared/model_artifact_controller/mlflow/Dockerfile .
+
+build.drift: ## Build drift detection image
+	docker build -t $(IMG_DRIFT) -f monitoring/drift/Dockerfile .
 
 # ═══════════════════════════════════════════════════════════════
 # DATASET (MNIST)
@@ -348,11 +364,11 @@ build.mlflow: ## Build mlflow image
 # Or in one shot (after k3d.redeploy): make data.setup
 # ═══════════════════════════════════════════════════════════════
 
-_LOCAL_DB  := postgresql://mlflow:mlflow@localhost:5432/mlflow
+# Local-access URLs use localhost NodePorts instead of in-cluster DNS.
+# Credentials come from .env (included above).
+_LOCAL_DB  := postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@localhost:5432/$(POSTGRES_DB)
 _LOCAL_S3  := http://localhost:9000
-_DATASET   := mnist-dataset
-_MINIO_KEY := minioadmin
-_DATA_ENV  := DATA_CONTROLLER_DB_URL=$(_LOCAL_DB) DATASET_S3_ENDPOINT_URL=$(_LOCAL_S3) DATASET_BUCKET=$(_DATASET) AWS_ACCESS_KEY_ID=$(_MINIO_KEY) AWS_SECRET_ACCESS_KEY=$(_MINIO_KEY)
+_DATA_ENV  := DATA_CONTROLLER_DB_URL=$(_LOCAL_DB) DATASET_S3_ENDPOINT_URL=$(_LOCAL_S3) DATASET_BUCKET=$(DATASET_BUCKET) AWS_ACCESS_KEY_ID=$(AWS_ACCESS_KEY_ID) AWS_SECRET_ACCESS_KEY=$(AWS_SECRET_ACCESS_KEY)
 
 .PHONY: data.prepare data.seed data.verify data.setup data.inspect.training
 
@@ -386,7 +402,7 @@ train.local: ## Train MNIST model locally against k3d Postgres, MinIO, and MLflo
 .PHONY: test test.unit test.integration \
         test.data_controller.unit test.data_controller.integration \
         test.model_artifact_controller.unit test.model_artifact_controller.integration \
-        lint lint.fix format serve.test serve.test.load mlflow.debug mlflow.ui minio.ui clean.pyc
+        lint lint.fix format serve.test serve.test.load serve.test.drift mlflow.debug mlflow.ui minio.ui clean.pyc
 
 test: ## Run all tests (unit + integration) in Docker
 	$(TEST_COMPOSE) run --rm test; \
@@ -447,6 +463,10 @@ serve.test: ## Smoke test against running serving (works with compose or k3d)
 serve.test.load: ## Send requests with ramp-up/down (RATE=5 DURATION=60 RAMP_UP=0 RAMP_DOWN=0)
 	python3 scripts/load_test.py --rate $${RATE:-5} --duration $${DURATION:-60} \
 		--ramp-up $${RAMP_UP:-0} --ramp-down $${RAMP_DOWN:-0}
+
+serve.test.drift: ## Send inverted images with ramping probability (RATE=5 DURATION=120 INVERSION_PROB=1.0 RAMP=60)
+	python3 scripts/drift_test.py --rate $${RATE:-5} --duration $${DURATION:-120} \
+		--inversion-probability $${INVERSION_PROB:-1.0} --ramp $${RAMP:-60}
 
 mlflow.debug: ## Inspect MLflow artifacts and test ONNX loading
 	PYTHONPATH=. python debug_mlflow.py

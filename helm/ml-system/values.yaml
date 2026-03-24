@@ -108,8 +108,24 @@ secrets:
 
 redis:
   enabled: false
+
 driftDetection:
   enabled: false
+  image: ml-system-drift:latest
+  port: 8001
+  env:
+    DATA_CONTROLLER_DB_URL: "postgresql://mlflow:mlflow@postgres:5432/mlflow"
+    MLFLOW_TRACKING_URI: "http://mlflow:5000"
+    MODEL_NAME: "ml_system_model"
+    MODEL_STAGE: "Production"
+    MLFLOW_S3_ENDPOINT_URL: "http://minio:9000"
+    DRIFT_POLL_INTERVAL: "5"
+    DRIFT_WINDOW_SECONDS: "300"
+  resources:
+    requests: { memory: "256Mi", cpu: "100m" }
+    limits: { memory: "512Mi", cpu: "250m" }
+  service:
+    type: ClusterIP
 sampleSelection:
   enabled: false
 controller:

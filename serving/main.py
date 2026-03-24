@@ -5,6 +5,7 @@ Usage: uvicorn serving.main:app --host 0.0.0.0 --port 8000
 """
 
 import asyncio
+import json
 import logging
 import os
 import tempfile
@@ -23,6 +24,7 @@ from prometheus_fastapi_instrumentator import Instrumentator
 from scipy.special import softmax
 
 from shared.artifact_paths import (
+    CLASS_GAUSSIANS_FILENAME,
     MLFLOW_PATH_ONNX_ROOT,
     resolve_classifier_path,
     resolve_embedder_path,
@@ -68,6 +70,12 @@ _confidence_histogram = Histogram(
     ["class_label"],
     buckets=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99, 1.0],
 )
+_mahalanobis_histogram = Histogram(
+    "prediction_mahalanobis_score",
+    "Squared Mahalanobis distance from predicted class Gaussian",
+    ["class_label"],
+    buckets=[20, 40, 60, 70, 80, 90, 100, 120, 150, 200, 500],
+)
 
 REDIS_URL = os.getenv("REDIS_URL", "")
 REDIS_STREAM_NAME = os.getenv("REDIS_STREAM_NAME", "inference_events")
@@ -77,6 +85,7 @@ class ModelManager:
     def __init__(self):
         self.classifier_session: ort.InferenceSession | None = None
         self.embedder_session: ort.InferenceSession | None = None
+        self.class_gaussians: dict | None = None
         self.model_version: str | None = None
         self._lock = threading.Lock()
         self._artifact_dir = tempfile.mkdtemp(prefix="ml_model_")
@@ -115,9 +124,28 @@ class ModelManager:
         new_cls = ort.InferenceSession(classifier_path, opts)
         new_emb = ort.InferenceSession(embedder_path, opts)
 
+        new_gaussians = None
+        try:
+            gauss_path = self._controller.download_artifacts(
+                run_id, CLASS_GAUSSIANS_FILENAME, self._artifact_dir
+            )
+            with open(gauss_path) as f:
+                raw = json.load(f)
+            new_gaussians = {
+                cls_key: {
+                    "mean": np.array(g["mean"], dtype=np.float64),
+                    "precision": np.array(g["precision"], dtype=np.float64),
+                }
+                for cls_key, g in raw["classes"].items()
+            }
+            logger.info("class_gaussians loaded for Mahalanobis scoring.")
+        except Exception as e:
+            logger.warning(f"class_gaussians.json unavailable, Mahalanobis scoring disabled: {e}")
+
         with self._lock:
             self.classifier_session = new_cls
             self.embedder_session = new_emb
+            self.class_gaussians = new_gaussians
             self.model_version = run_id
 
         logger.info(f"Model loaded: {run_id}")
@@ -242,6 +270,15 @@ async def predict(request: PredictRequest):
     request_id = request.request_id or str(uuid.uuid4())
     _prediction_class_counter.labels(class_label=str(result["prediction"])).inc()
     _confidence_histogram.labels(class_label=str(result["prediction"])).observe(result["confidence"])
+    gaussians = model_manager.class_gaussians
+    if gaussians is not None:
+        try:
+            g = gaussians[str(result["prediction"])]
+            delta = np.array(result["embedding"]) - g["mean"]
+            score = float(delta @ g["precision"] @ delta)
+            _mahalanobis_histogram.labels(class_label=str(result["prediction"])).observe(score)
+        except Exception as e:
+            logger.warning(f"Mahalanobis scoring failed: {e}")
 
     response = PredictResponse(
         prediction=result["prediction"],

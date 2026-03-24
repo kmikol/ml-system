@@ -25,6 +25,7 @@ from shared.artifact_paths import (
 )
 from shared.config import require_env
 from shared.data_controller.dataset import DatasetController
+from shared.logging_config import setup_logging
 from shared.model_artifact_controller.mlflow import MLflowModelArtifactController
 from shared.schemas.feature_schema import (
     EMBEDDING_DIM,
@@ -33,7 +34,7 @@ from shared.schemas.feature_schema import (
 )
 from training.model import Classifier, ClassifierWrapper, EmbedderWrapper
 
-logging.basicConfig(level=logging.INFO)
+setup_logging("training")
 logger = logging.getLogger(__name__)
 
 # ── All config from env, no defaults ─────────────────────────────

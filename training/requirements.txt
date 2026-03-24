@@ -8,3 +8,4 @@ numpy>=1.26.0
 pydantic>=2.6.0
 boto3>=1.34.0
 psycopg2-binary>=2.9.0
+python-logging-loki>=0.3.1

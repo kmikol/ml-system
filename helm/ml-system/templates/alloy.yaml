@@ -1,7 +1,7 @@
 {{- if .Values.alloy.enabled }}
 # ── RBAC ─────────────────────────────────────────────────────────────────────
-# Alloy needs to query the k8s API to discover pod IPs for per-pod scraping.
-# Without this it can only hit the Service VIP (one random pod per scrape).
+# Alloy needs to query the k8s API to discover pod IPs for per-pod scraping
+# and to read pod logs via the Kubernetes API.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -15,7 +15,7 @@ metadata:
   namespace: {{ .Values.global.namespace }}
 rules:
   - apiGroups: [""]
-    resources: ["pods", "endpoints", "services"]
+    resources: ["pods", "pods/log", "endpoints", "services"]
     verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -79,6 +79,47 @@ data:
     prometheus.remote_write "local" {
       endpoint {
         url = "http://prometheus.{{ .Values.global.namespace }}.svc.cluster.local:{{ .Values.prometheus.port }}/api/v1/write"
+      }
+    }
+
+    // ── Pod log collection → Loki ─────────────────────────────────────────────
+    // Discover all pods in the ml-system namespace for log scraping.
+    discovery.kubernetes "pods" {
+      role = "pod"
+      namespaces {
+        names = [{{ .Values.global.namespace | quote }}]
+      }
+    }
+
+    // Attach useful labels: namespace, pod name, container name, and app label.
+    discovery.relabel "pod_logs" {
+      targets = discovery.kubernetes.pods.targets
+      rule {
+        source_labels = ["__meta_kubernetes_namespace"]
+        target_label  = "namespace"
+      }
+      rule {
+        source_labels = ["__meta_kubernetes_pod_name"]
+        target_label  = "pod"
+      }
+      rule {
+        source_labels = ["__meta_kubernetes_pod_container_name"]
+        target_label  = "container"
+      }
+      rule {
+        source_labels = ["__meta_kubernetes_pod_label_app"]
+        target_label  = "service"
+      }
+    }
+
+    loki.source.kubernetes "pod_logs" {
+      targets    = discovery.relabel.pod_logs.output
+      forward_to = [loki.write.local.receiver]
+    }
+
+    loki.write "local" {
+      endpoint {
+        url = "http://loki.{{ .Values.global.namespace }}.svc.cluster.local:{{ .Values.loki.port }}/loki/api/v1/push"
       }
     }
 ---

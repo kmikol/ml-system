@@ -10,6 +10,7 @@ serving:
   port: 8000
   env:
     DATA_CONTROLLER_DB_URL: "postgresql://mlflow:mlflow@postgres:5432/mlflow"
+    LOKI_URL: "http://loki:3100"
   service:
     type: ClusterIP
   resources:
@@ -68,6 +69,15 @@ alloy:
   enabled: true
   image: grafana/alloy:latest
   scrapeIntervalSeconds: 15
+
+loki:
+  enabled: true
+  image: grafana/loki:2.9.0
+  port: 3100
+  persistence:
+    size: 5Gi
+  service:
+    type: ClusterIP
 
 autoscaling:
   enabled: true

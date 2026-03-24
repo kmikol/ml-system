@@ -7,7 +7,6 @@ Usage: uvicorn serving.main:app --host 0.0.0.0 --port 8000
 import asyncio
 import json
 import logging
-import os
 import tempfile
 import threading
 import time
@@ -76,10 +75,6 @@ _mahalanobis_histogram = Histogram(
     ["class_label"],
     buckets=[20, 40, 60, 70, 80, 90, 100, 120, 150, 200, 500],
 )
-
-REDIS_URL = os.getenv("REDIS_URL", "")
-REDIS_STREAM_NAME = os.getenv("REDIS_STREAM_NAME", "inference_events")
-
 
 class ModelManager:
     def __init__(self):
@@ -179,38 +174,7 @@ class ModelManager:
         return self.classifier_session is not None
 
 
-class RedisPublisher:
-    def __init__(self):
-        self._client = None
-        self._available = False
-        self._failures = 0
-
-    def connect(self):
-        try:
-            import redis
-
-            self._client = redis.from_url(REDIS_URL, socket_timeout=1)
-            self._client.ping()
-            self._available = True
-            logger.info(f"Redis connected: {REDIS_URL}")
-        except Exception as e:
-            logger.warning(f"Redis unavailable (serving continues without): {e}")
-            self._available = False
-
-    def publish(self, event_json: str):
-        if not self._available:
-            return
-        try:
-            self._client.xadd(
-                REDIS_STREAM_NAME, {"payload": event_json}, maxlen=100000, approximate=True
-            )
-        except Exception as e:
-            self._failures += 1
-            logger.warning(f"Redis publish failed ({self._failures} total): {e}")
-
-
 model_manager = ModelManager()
-redis_publisher = RedisPublisher()
 data_controller = ServingDataController()
 start_time = time.time()
 
@@ -234,7 +198,6 @@ async def lifespan(app: FastAPI):
     else:
         logger.error("Failed to load model after 5 attempts.")
 
-    redis_publisher.connect()
     threading.Thread(target=poll_model_registry, daemon=True).start()
     yield
     logger.info("Shutting down.")
@@ -299,24 +262,6 @@ async def predict(request: PredictRequest):
             prediction_distribution=result["prediction_distribution"],
         )
     )
-
-    try:
-        from shared.schemas.inference_event import InferenceEvent
-
-        event = InferenceEvent(
-            event_id=str(uuid.uuid4()),
-            timestamp=datetime.now(UTC),
-            model_version=model_manager.model_version,
-            request_id=request_id,
-            image=request.image,
-            embedding=result["embedding"],
-            prediction=result["prediction"],
-            confidence=result["confidence"],
-            prediction_distribution=result["prediction_distribution"],
-        )
-        redis_publisher.publish(event.model_dump_json())
-    except Exception as e:
-        logger.warning(f"Redis publish failed: {e}")
 
     return response
 

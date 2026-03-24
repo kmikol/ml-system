@@ -1,12 +1,24 @@
 .DEFAULT_GOAL := help
 SHELL := /bin/bash
-COMPOSE := docker compose
 
-# ── Project config — single source of truth ──────────────────────
-# All KEY=VALUE pairs from .env become Make variables here.
-# k3d.train, k3d.annotate, data.*, and serve.test.* targets use them
-# directly instead of hardcoding values inline.
--include .env
+# ── Project config ────────────────────────────────────────────────
+# These values must mirror helm/ml-system/values-local.yaml.
+# Used by Makefile targets that run one-off pods (k3d.train,
+# k3d.annotate) and local scripts (data.*, train.local).
+AWS_ACCESS_KEY_ID     := minioadmin
+AWS_SECRET_ACCESS_KEY := minioadmin
+MLFLOW_S3_ENDPOINT_URL := http://minio:9000
+POSTGRES_USER    := mlflow
+POSTGRES_PASSWORD := mlflow
+POSTGRES_DB      := mlflow
+DATA_CONTROLLER_DB_URL := postgresql://mlflow:mlflow@postgres:5432/mlflow
+MLFLOW_TRACKING_URI := http://mlflow:5000
+MODEL_NAME       := ml_system_model
+TRAINING_MAX_EPOCHS := 20
+TRAINING_SEED    := 42
+TRAINING_BATCH_SIZE := 256
+TRAINING_LR      := 1e-3
+DATASET_BUCKET   := mnist-dataset
 
 # ── k3d / Kubernetes config ──────────────────────────────────────
 K3D_CLUSTER   := ml-system
@@ -365,7 +377,6 @@ build.drift: ## Build drift detection image
 # ═══════════════════════════════════════════════════════════════
 
 # Local-access URLs use localhost NodePorts instead of in-cluster DNS.
-# Credentials come from .env (included above).
 _LOCAL_DB  := postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@localhost:5432/$(POSTGRES_DB)
 _LOCAL_S3  := http://localhost:9000
 _DATA_ENV  := DATA_CONTROLLER_DB_URL=$(_LOCAL_DB) DATASET_S3_ENDPOINT_URL=$(_LOCAL_S3) DATASET_BUCKET=$(DATASET_BUCKET) AWS_ACCESS_KEY_ID=$(AWS_ACCESS_KEY_ID) AWS_SECRET_ACCESS_KEY=$(AWS_SECRET_ACCESS_KEY)
@@ -516,67 +527,3 @@ docs.serve.online: ## Build and deploy docs to GitHub Pages (gh-pages branch)
 #   make k3d.delete && make k3d.create && make k3d.redeploy
 #
 # ═══════════════════════════════════════════════════════════════
-
-
-# ╔═══════════════════════════════════════════════════════════════╗
-# ║  DEPRECATED — DOCKER COMPOSE                                  ║
-# ║                                                               ║
-# ║  These targets drove the initial development phase.           ║
-# ║  All services now run in Kubernetes (k3d). Use the k3d.*      ║
-# ║  targets above instead.                                       ║
-# ║                                                               ║
-# ║  Kept for reference and emergency local debugging only.       ║
-# ╚═══════════════════════════════════════════════════════════════╝
-
-.PHONY: dc.infra.up dc.infra.down dc.infra.logs dc.infra.ps dc.infra.clean
-.PHONY: dc.serve dc.serve.down dc.serve.logs dc.up dc.down dc.train
-
-dc.infra.up: ## [DEPRECATED] Start full stack in Docker Compose
-	@echo "$(YELLOW)[DEPRECATED] Use 'make k3d.deploy' instead.$(RESET)"
-	@docker network create ml-system_default 2>/dev/null || true
-	$(COMPOSE) up -d postgres minio minio-init mlflow prometheus alloy grafana
-	@echo "$(GREEN)Waiting for MLflow...$(RESET)"
-	@until curl -sf http://localhost:5000/health > /dev/null 2>&1; do sleep 2; done
-	@echo "$(GREEN)Waiting for Grafana...$(RESET)"
-	@until curl -sf http://localhost:3000/api/health > /dev/null 2>&1; do sleep 2; done
-	@echo "$(GREEN)Ready.$(RESET)"
-
-dc.infra.down: ## [DEPRECATED] Stop Docker Compose infrastructure
-	@echo "$(YELLOW)[DEPRECATED]$(RESET)"
-	$(COMPOSE) down
-
-dc.infra.logs: ## [DEPRECATED] Tail Docker Compose infrastructure logs
-	@echo "$(YELLOW)[DEPRECATED]$(RESET)"
-	$(COMPOSE) logs -f postgres minio mlflow alloy prometheus grafana
-
-dc.infra.ps: ## [DEPRECATED] Show running Docker Compose services
-	@echo "$(YELLOW)[DEPRECATED]$(RESET)"
-	$(COMPOSE) ps
-
-dc.infra.clean: ## [DEPRECATED] Stop Docker Compose and destroy all volumes
-	@echo "$(YELLOW)[DEPRECATED]$(RESET)"
-	$(COMPOSE) down -v
-
-dc.serve: ## [DEPRECATED] Start serving in Docker Compose
-	@echo "$(YELLOW)[DEPRECATED] Use 'make k3d.deploy' instead.$(RESET)"
-	$(COMPOSE) up -d serving
-
-dc.serve.down: ## [DEPRECATED] Stop serving in Docker Compose
-	@echo "$(YELLOW)[DEPRECATED]$(RESET)"
-	$(COMPOSE) stop serving
-
-dc.serve.logs: ## [DEPRECATED] Tail serving logs in Docker Compose
-	@echo "$(YELLOW)[DEPRECATED]$(RESET)"
-	$(COMPOSE) logs -f serving
-
-dc.up: ## [DEPRECATED] Full Docker Compose pipeline (infra + train + serve)
-	@echo "$(YELLOW)[DEPRECATED] Use 'make k3d.redeploy' instead.$(RESET)"
-	@$(MAKE) dc.infra.up
-
-dc.down: ## [DEPRECATED] Stop all Docker Compose services
-	@echo "$(YELLOW)[DEPRECATED]$(RESET)"
-	$(COMPOSE) down
-
-dc.train: ## [DEPRECATED] Train in Docker Compose (use train.local instead)
-	@echo "$(YELLOW)[DEPRECATED] Use 'make train.local' instead.$(RESET)"
-	$(COMPOSE) run --rm training

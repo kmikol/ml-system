@@ -7,6 +7,7 @@ Checks:
   - Each split has the expected number of samples
   - All 10 digit labels are present in the training split
   - A spot-check sample downloads correctly from MinIO and matches Postgres
+  - UUIDs from uuids.npy are present as sample_ids in the database
 
 Usage:
     DATA_CONTROLLER_DB_URL=... DATASET_S3_ENDPOINT_URL=... DATASET_BUCKET=... \
@@ -21,6 +22,12 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from shared.data_controller.dataset import DatasetController  # noqa: E402
+
+DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "v0")
+
+# Number of UUIDs spot-checked against the database.  Checking all samples
+# would be slow; a small prefix is sufficient to confirm propagation worked.
+_UUID_SPOT_CHECK_COUNT = 10
 
 
 def main():
@@ -47,6 +54,21 @@ def main():
         sys.exit(1)
 
     print("  OK: MinIO == Postgres pixel values")
+
+    print("Checking UUID propagation (uuids.npy → database sample_ids)...")
+    uuids_path = os.path.join(DATA_DIR, "train", "uuids.npy")
+    if not os.path.exists(uuids_path):
+        print(f"  SKIP — {uuids_path} not found (run data.prepare first)")
+    else:
+        uuids = np.load(uuids_path)
+        db_sample_ids = {s["sample_id"] for s in train}
+        missing = [u for u in uuids[:_UUID_SPOT_CHECK_COUNT] if str(u) not in db_sample_ids]
+        if missing:
+            print(f"  ERROR: {len(missing)} UUIDs from uuids.npy not found in database")
+            print(f"  First missing: {missing[0]}")
+            sys.exit(1)
+        print("  OK: UUIDs from uuids.npy present in database")
+
     print("Verification passed.")
 
 

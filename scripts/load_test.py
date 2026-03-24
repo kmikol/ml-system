@@ -33,6 +33,7 @@ from collections import defaultdict
 import numpy as np
 
 _POOL_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "remaining", "images.npy")
+_UUIDS_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "remaining", "uuids.npy")
 _POOL_SIZE = 1_000  # payloads pre-serialized at startup; avoids per-request numpy/json overhead
 
 HEADERS = {"Content-Type": "application/json"}
@@ -47,12 +48,16 @@ def _load_pool() -> list[bytes]:
     """Load remaining MNIST images and pre-serialize a random sample to JSON bytes."""
     try:
         images = np.load(_POOL_PATH)  # shape (N, 14, 14), float32
-    except FileNotFoundError:
-        print(f"ERROR: {_POOL_PATH} not found. Run 'make data.prepare' first.", file=sys.stderr)
+        uuids = np.load(_UUIDS_PATH)  # shape (N,), str — assigned at prepare time
+    except FileNotFoundError as e:
+        print(f"ERROR: {e}. Run 'make data.prepare' first.", file=sys.stderr)
         sys.exit(1)
     print(f"Loaded {len(images):,} images. Pre-serializing {_POOL_SIZE:,} payloads...", flush=True)
     idx = np.random.randint(0, len(images), size=_POOL_SIZE)
-    return [json.dumps({"image": images[i].tolist()}).encode() for i in idx]
+    return [
+        json.dumps({"image": images[i].tolist(), "request_id": str(uuids[i])}).encode()
+        for i in idx
+    ]
 
 
 def _percentile(data: list[float], p: float) -> float:

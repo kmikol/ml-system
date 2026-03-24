@@ -1,3 +1,14 @@
+[tool.pytest.ini_options]
+filterwarnings = [
+    # Third-party package internals — not fixable from our side.
+    "ignore:pkg_resources is deprecated:DeprecationWarning",
+    "ignore:The distutils package is deprecated:DeprecationWarning",
+    "ignore:Distutils was imported before Setuptools:UserWarning",
+    "ignore:Setuptools is replacing distutils:UserWarning",
+    # Pydantic v1 validators inside mlflow.gateway (mlflow internals).
+    "ignore::pydantic.warnings.PydanticDeprecatedSince20",
+]
+
 [tool.ruff]
 target-version = "py311"
 line-length = 100

@@ -200,18 +200,17 @@ class TestRegisterModel:
 
 
 class TestPromoteModel:
-    def test_transitions_to_production(self, ctrl):
+    def test_sets_production_alias(self, ctrl):
         ctrl.promote_model("my_model", "3")
 
-        ctrl._client.transition_model_version_stage.assert_called_once_with(
+        ctrl._client.set_registered_model_alias.assert_called_once_with(
             name="my_model",
+            alias="Production",
             version="3",
-            stage="Production",
-            archive_existing_versions=True,
         )
 
     def test_wraps_client_error(self, ctrl):
-        ctrl._client.transition_model_version_stage.side_effect = Exception("permission denied")
+        ctrl._client.set_registered_model_alias.side_effect = Exception("permission denied")
 
         with pytest.raises(ModelArtifactError, match="my_model"):
             ctrl.promote_model("my_model", "3")
@@ -221,48 +220,28 @@ class TestPromoteModel:
 
 
 class TestGetProductionRunId:
-    def _make_version(self, stage, run_id):
-        v = MagicMock()
-        v.current_stage = stage
-        v.run_id = run_id
-        return v
-
-    def test_returns_run_id_for_matching_stage(self, ctrl):
-        ctrl._client.search_model_versions.return_value = [
-            self._make_version("Production", "prod-run-99"),
-        ]
+    def test_returns_run_id_for_alias(self, ctrl):
+        mv = MagicMock()
+        mv.run_id = "prod-run-99"
+        ctrl._client.get_model_version_by_alias.return_value = mv
 
         result = ctrl.get_production_run_id("my_model", "Production")
 
         assert result == "prod-run-99"
+        ctrl._client.get_model_version_by_alias.assert_called_once_with(
+            name="my_model", alias="Production"
+        )
 
-    def test_ignores_versions_in_other_stages(self, ctrl):
-        ctrl._client.search_model_versions.return_value = [
-            self._make_version("Archived", "old-run"),
-            self._make_version("Production", "prod-run-99"),
-            self._make_version("Staging", "staging-run"),
-        ]
+    def test_raises_when_alias_not_found(self, ctrl):
+        ctrl._client.get_model_version_by_alias.side_effect = Exception(
+            "RESOURCE_DOES_NOT_EXIST: Registered model alias Production not found"
+        )
 
-        result = ctrl.get_production_run_id("my_model", "Production")
-
-        assert result == "prod-run-99"
-
-    def test_raises_when_no_version_in_stage(self, ctrl):
-        ctrl._client.search_model_versions.return_value = [
-            self._make_version("Archived", "old-run"),
-        ]
-
-        with pytest.raises(ModelArtifactError, match="No model 'my_model' in stage 'Production'"):
-            ctrl.get_production_run_id("my_model", "Production")
-
-    def test_raises_when_no_versions_at_all(self, ctrl):
-        ctrl._client.search_model_versions.return_value = []
-
-        with pytest.raises(ModelArtifactError):
+        with pytest.raises(ModelArtifactError, match="my_model"):
             ctrl.get_production_run_id("my_model", "Production")
 
     def test_wraps_client_error(self, ctrl):
-        ctrl._client.search_model_versions.side_effect = Exception("DB timeout")
+        ctrl._client.get_model_version_by_alias.side_effect = Exception("DB timeout")
 
         with pytest.raises(ModelArtifactError, match="my_model"):
             ctrl.get_production_run_id("my_model", "Production")

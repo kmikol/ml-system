@@ -30,7 +30,6 @@ ONNX_FILENAME = "model.onnx"
 REFERENCE_DIST_FILENAME = "reference_distribution.json"
 CLASS_GAUSSIANS_FILENAME = "class_gaussians.json"
 FEATURE_SCHEMA_FILENAME = "feature_schema.json"
-EVAL_REPORT_FILENAME = "evaluation_report.json"
 
 # ── MLflow artifact paths (for log_artifacts / download_artifacts) ─
 MLFLOW_PATH_ONNX_ROOT = "onnx"

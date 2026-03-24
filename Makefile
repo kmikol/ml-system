@@ -402,7 +402,7 @@ train.local: ## Train MNIST model locally against k3d Postgres, MinIO, and MLflo
 .PHONY: test test.unit test.integration \
         test.data_controller.unit test.data_controller.integration \
         test.model_artifact_controller.unit test.model_artifact_controller.integration \
-        lint lint.fix format serve.test serve.test.load serve.test.drift mlflow.debug mlflow.ui minio.ui clean.pyc
+        lint lint.fix format serve.test serve.test.load serve.test.drift mlflow.ui minio.ui clean.pyc
 
 test: ## Run all tests (unit + integration) in Docker
 	$(TEST_COMPOSE) run --rm test; \
@@ -467,9 +467,6 @@ serve.test.load: ## Send requests with ramp-up/down (RATE=5 DURATION=60 RAMP_UP=
 serve.test.drift: ## Send inverted images with ramping probability (RATE=5 DURATION=120 INVERSION_PROB=1.0 RAMP=60)
 	python3 scripts/drift_test.py --rate $${RATE:-5} --duration $${DURATION:-120} \
 		--inversion-probability $${INVERSION_PROB:-1.0} --ramp $${RAMP:-60}
-
-mlflow.debug: ## Inspect MLflow artifacts and test ONNX loading
-	PYTHONPATH=. python debug_mlflow.py
 
 mlflow.ui: ## Open MLflow UI
 	@open http://localhost:5000 2>/dev/null || echo "http://localhost:5000"

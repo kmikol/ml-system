@@ -112,17 +112,17 @@ class MLflowModelArtifactController:
             ) from exc
 
     def promote_model(self, model_name: str, version: str) -> None:
-        """Transition *version* of *model_name* to the ``Production`` stage.
+        """Set the ``Production`` alias on *version* of *model_name*.
 
-        All other versions of *model_name* are archived automatically
-        (``archive_existing_versions=True``).
+        Uses the MLflow aliases API (introduced in 2.9.0) instead of the
+        deprecated stages API. Only one version can hold the ``Production``
+        alias at a time — MLflow moves it automatically.
         """
         try:
-            self._client.transition_model_version_stage(
+            self._client.set_registered_model_alias(
                 name=model_name,
+                alias="Production",
                 version=version,
-                stage="Production",
-                archive_existing_versions=True,
             )
         except Exception as exc:
             raise ModelArtifactError(
@@ -130,17 +130,14 @@ class MLflowModelArtifactController:
             ) from exc
 
     def get_production_run_id(self, model_name: str, stage: str) -> str:
-        """Return the ``run_id`` for the version of *model_name* currently in *stage*.
+        """Return the ``run_id`` for the version of *model_name* with alias *stage*.
 
         Typical usage: ``stage="Production"``. Raises ``ModelArtifactError``
-        if no version of *model_name* is in that stage.
+        if no version of *model_name* carries that alias.
         """
         try:
-            versions = self._client.search_model_versions(f"name='{model_name}'")
-            prod = next((v for v in versions if v.current_stage == stage), None)
-            if prod is None:
-                raise ModelArtifactError(f"No model '{model_name}' in stage '{stage}'")
-            return prod.run_id
+            mv = self._client.get_model_version_by_alias(name=model_name, alias=stage)
+            return mv.run_id
         except ModelArtifactError:
             raise
         except Exception as exc:

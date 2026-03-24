@@ -106,9 +106,6 @@ secrets:
   minioSecretKey: minioadmin
   postgresPassword: mlflow
 
-redis:
-  enabled: false
-
 driftDetection:
   enabled: false
   image: ml-system-drift:latest
@@ -126,7 +123,3 @@ driftDetection:
     limits: { memory: "512Mi", cpu: "250m" }
   service:
     type: ClusterIP
-sampleSelection:
-  enabled: false
-controller:
-  enabled: false

@@ -151,15 +151,13 @@ class TestModelRegistry:
         assert isinstance(version, str)
         assert version.isdigit()
 
-    def test_promote_model_marks_version_as_production(self, ctrl, registered_model):
+    def test_promote_model_sets_production_alias(self, ctrl, registered_model):
         model_name, run_id, version = registered_model
         ctrl.promote_model(model_name, version)
 
         client = mlflow.tracking.MlflowClient()
-        versions = client.search_model_versions(f"name='{model_name}'")
-        prod = next((v for v in versions if v.current_stage == "Production"), None)
-        assert prod is not None
-        assert str(prod.version) == version
+        mv = client.get_model_version_by_alias(model_name, "Production")
+        assert str(mv.version) == version
 
     def test_get_production_run_id_returns_correct_run(self, ctrl, registered_model):
         model_name, run_id, version = registered_model

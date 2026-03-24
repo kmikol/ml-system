@@ -152,6 +152,12 @@ def main():
         f"{NUM_CLASSES} classes, {INPUT_DIM} input_dim"
     )
 
+    if not train_samples or not val_samples:
+        raise RuntimeError(
+            "Dataset split is empty. Expected non-empty 'train' and 'val' splits in the data "
+            "controller backend. Run dataset setup/seed before training."
+        )
+
     train_loader, val_loader = make_dataloaders(train_samples, val_samples, BATCH_SIZE)
 
     model = Classifier(

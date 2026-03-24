@@ -51,8 +51,14 @@ def seed_split(ctrl: DatasetController, split: str, date_prefix: str) -> int:
     labels = np.load(labels_path)         # (N,) int64
     uuids = np.load(uuids_path)           # (N,) str — assigned at prepare time
 
+    if not (len(images) == len(labels) == len(uuids)):
+        raise ValueError(
+            f"[{split}] Inconsistent array lengths: "
+            f"images={len(images)} labels={len(labels)} uuids={len(uuids)}"
+        )
+
     count = 0
-    for i, (img, label, sample_id) in enumerate(zip(images, labels, uuids, strict=True)):
+    for i, (img, label, sample_id) in enumerate(zip(images, labels, uuids)):
         minio_path = f"{date_prefix}/{sample_id}.npy"
         ctrl.store_sample(
             sample_id=str(sample_id),

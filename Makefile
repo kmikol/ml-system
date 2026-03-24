@@ -312,7 +312,14 @@ k3d.train: ## Build training image, run training job in k3d, stream logs, clean 
 	kubectl wait --for=condition=Ready pod/training -n $(K8S_NAMESPACE) --timeout=120s
 	@echo "$(CYAN)Streaming logs (Ctrl+C detaches but pod keeps running):$(RESET)"
 	kubectl logs -f training -n $(K8S_NAMESPACE)
-	kubectl delete pod training -n $(K8S_NAMESPACE) --ignore-not-found=true
+	@EXIT_CODE=$$(kubectl get pod training -n $(K8S_NAMESPACE) -o jsonpath='{.status.containerStatuses[0].state.terminated.exitCode}'); \
+	if [ -z "$$EXIT_CODE" ]; then EXIT_CODE=1; fi; \
+	echo "Training pod exit code: $$EXIT_CODE"; \
+	kubectl delete pod training -n $(K8S_NAMESPACE) --ignore-not-found=true; \
+	if [ "$$EXIT_CODE" -ne 0 ]; then \
+		echo "$(RED)Training failed. See logs above.$(RESET)"; \
+		exit $$EXIT_CODE; \
+	fi
 	@echo "$(GREEN)Training complete. MLflow: http://localhost:5000$(RESET)"
 
 k3d.serve.restart: ## Restart serving pod to immediately load the latest model from MLflow

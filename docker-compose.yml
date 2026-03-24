@@ -130,6 +130,19 @@ services:
     profiles:
       - training
 
+  annotation:
+    build:
+      context: .
+      dockerfile: annotation/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATA_CONTROLLER_DB_URL: ${DATA_CONTROLLER_DB_URL}
+      ANNOTATION_SAMPLES_PER_RUN: ${ANNOTATION_SAMPLES_PER_RUN:-10}
+    profiles:
+      - annotation
+
   # ════════════════════════════════════════════════════════════════
   # PHASE 3 — Monitoring
   # ════════════════════════════════════════════════════════════════

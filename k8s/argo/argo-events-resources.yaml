@@ -17,8 +17,6 @@ spec:
       auth: none
 ---
 # EventSource: receives the AlertManager webhook POST when PSI > 0.25.
-# Argo Events controller auto-creates a Service named "psi-alert-eventsource-svc"
-# in ml-system namespace with port 12000.
 apiVersion: argoproj.io/v1alpha1
 kind: EventSource
 metadata:
@@ -30,6 +28,20 @@ spec:
       port: "12000"
       endpoint: /psi-alert
       method: POST
+---
+# Service for the EventSource webhook pod. Argo Events should auto-create this
+# but doesn't reliably do so across versions — we create it explicitly.
+apiVersion: v1
+kind: Service
+metadata:
+  name: psi-alert-eventsource-svc
+  namespace: ml-system
+spec:
+  selector:
+    eventsource-name: psi-alert
+  ports:
+    - port: 12000
+      targetPort: 12000
 ---
 # Sensor: listens to the EventSource and submits a Workflow to the argo namespace.
 apiVersion: argoproj.io/v1alpha1

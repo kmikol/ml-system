@@ -40,6 +40,8 @@ plugins:
 nav:
   - Home: index.md
   - Architecture: architecture.md
+  - Guides:
+    - PSI Alert → Argo Workflow: alert-to-workflow.md
   - API Reference:
     - Data Controller: api/data_controller.md
     - Model Artifact Controller: api/model_artifact_controller.md

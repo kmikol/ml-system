@@ -14,9 +14,9 @@ data:
         - match:
             alertname: PsiThresholdBreached
           receiver: 'argo-events-webhook'
+          repeat_interval: 1m
     receivers:
       - name: 'default'
-        webhook_configs: []
       - name: 'argo-events-webhook'
         webhook_configs:
           - url: 'http://psi-alert-eventsource-svc.{{ .Values.global.namespace }}.svc.cluster.local:12000/psi-alert'

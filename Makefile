@@ -188,7 +188,7 @@ k3d.bootstrap: ## First-time setup: create cluster, install KEDA+Argo, build+imp
 	@$(MAKE) --no-print-directory k3d.train
 	@echo ""
 	@echo "$(CYAN)[9/9] Restarting serving to load the trained model...$(RESET)"
-	@$(MAKE) --no-print-directory k3d.serve.restart
+	@$(MAKE) --no-print-directory x
 	@echo ""
 	@echo "$(GREEN)╔══════════════════════════════════════════════════════╗$(RESET)"
 	@echo "$(GREEN)║  Bootstrap complete!                                 ║$(RESET)"
@@ -232,7 +232,7 @@ k3d.delete: ## Delete k3d cluster and all its data
 	k3d cluster delete $(K3D_CLUSTER)
 	@echo "$(YELLOW)Cluster '$(K3D_CLUSTER)' deleted.$(RESET)"
 
-k3d.build: build ## Build all custom Docker images (serving, mlflow, drift)
+k3d.build: build ## Build all custom Docker images (serving, mlflow, drift, annotation)
 	@echo "$(GREEN)Images built. Run 'make k3d.import' to load them into the cluster.$(RESET)"
 
 k3d.import: ## Import custom images into k3d's container runtime
@@ -244,6 +244,7 @@ k3d.import: ## Import custom images into k3d's container runtime
 	k3d image import $(IMG_SERVING) -c $(K3D_CLUSTER)
 	k3d image import $(IMG_MLFLOW) -c $(K3D_CLUSTER)
 	k3d image import $(IMG_DRIFT) -c $(K3D_CLUSTER)
+	k3d image import $(IMG_ANNOTATION) -c $(K3D_CLUSTER)
 	@echo "$(GREEN)Images imported.$(RESET)"
 
 k3d.deploy: ## Deploy (or upgrade) all services with Helm, then apply Argo Events CRD instances
@@ -388,9 +389,9 @@ k3d.annotate: ## Build annotation image, run annotation job in k3d, stream logs,
 # BUILD
 # ═══════════════════════════════════════════════════════════════
 
-.PHONY: build build.serving build.training build.mlflow build.drift
+.PHONY: build build.serving build.training build.mlflow build.drift build.annotation
 
-build: build.serving build.mlflow build.drift ## Build all custom images (serving, mlflow, drift)
+build: build.serving build.mlflow build.drift build.annotation ## Build all custom images (serving, mlflow, drift, annotation)
 
 build.serving: ## Build serving image
 	docker build -t $(IMG_SERVING) -f serving/Dockerfile .
@@ -403,6 +404,9 @@ build.mlflow: ## Build mlflow image
 
 build.drift: ## Build drift detection image
 	docker build -t $(IMG_DRIFT) -f monitoring/drift/Dockerfile .
+
+build.annotation: ## Build annotation image
+	docker build -t $(IMG_ANNOTATION) -f annotation/Dockerfile .
 
 # ═══════════════════════════════════════════════════════════════
 # DATASET (MNIST)

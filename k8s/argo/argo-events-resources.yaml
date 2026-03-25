@@ -1,0 +1,127 @@
+# Argo Events CRD instances for the PSI alert pipeline.
+# Applied separately from Helm via: kubectl apply --server-side --force-conflicts
+# Reason: Argo Events controller uses SSA to manage .spec.triggers on Sensor,
+# which conflicts with Helm's client-side apply on subsequent upgrades.
+---
+# EventBus: NATS messaging backbone required by Argo Events.
+# Must be named "default" so EventSource and Sensor discover it automatically.
+apiVersion: argoproj.io/v1alpha1
+kind: EventBus
+metadata:
+  name: default
+  namespace: ml-system
+spec:
+  nats:
+    native:
+      replicas: 1
+      auth: none
+---
+# EventSource: receives the AlertManager webhook POST when PSI > 0.25.
+# Argo Events controller auto-creates a Service named "psi-alert-eventsource-svc"
+# in ml-system namespace with port 12000.
+apiVersion: argoproj.io/v1alpha1
+kind: EventSource
+metadata:
+  name: psi-alert
+  namespace: ml-system
+spec:
+  webhook:
+    psi-alert:
+      port: "12000"
+      endpoint: /psi-alert
+      method: POST
+---
+# Sensor: listens to the EventSource and submits a Workflow to the argo namespace.
+apiVersion: argoproj.io/v1alpha1
+kind: Sensor
+metadata:
+  name: psi-alert-sensor
+  namespace: ml-system
+spec:
+  template:
+    serviceAccountName: argo-events-sa
+  dependencies:
+    - name: psi-alert-dep
+      eventSourceName: psi-alert
+      eventName: psi-alert
+  triggers:
+    - template:
+        name: trigger-sample-and-label
+        argoWorkflow:
+          group: argoproj.io
+          version: v1alpha1
+          resource: workflows
+          operation: submit
+          source:
+            resource:
+              apiVersion: argoproj.io/v1alpha1
+              kind: Workflow
+              metadata:
+                generateName: sample-and-label-
+                namespace: argo
+              spec:
+                workflowTemplateRef:
+                  name: sample-and-label
+---
+# RBAC: grants the default service account in argo namespace permission to
+# create workflowtaskresults — required by Argo's emissary executor for every
+# workflow pod, regardless of what the workflow does.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: workflow-pod-role
+  namespace: argo
+rules:
+  - apiGroups: ["argoproj.io"]
+    resources: ["workflowtaskresults"]
+    verbs: ["create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: workflow-pod-role-binding
+  namespace: argo
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: workflow-pod-role
+subjects:
+  - kind: ServiceAccount
+    name: default
+    namespace: argo
+---
+# WorkflowTemplate: runs the annotation service when drift is detected.
+#
+# The annotation service fetches up to MAX_SAMPLES_TO_ANNOTATE candidate predictions
+# (status='candidate') and writes their ground-truth labels back to Postgres.
+# get_candidates(limit=N) returns min(n_unannotated, N) rows, so the batch is
+# naturally capped — it never tries to annotate more than what exists.
+#
+# Prerequisite: annotation image must be imported into k3d before this runs:
+#   docker build -t ml-system-annotation:latest -f annotation/Dockerfile .
+#   k3d image import ml-system-annotation:latest -c ml-system
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: sample-and-label
+  namespace: argo
+spec:
+  entrypoint: sample-and-label
+  arguments:
+    parameters:
+      - name: max-samples-to-annotate
+        value: "50"
+  templates:
+    - name: sample-and-label
+      container:
+        image: ml-system-annotation:latest
+        # Never: image is imported into k3d, not pulled from a registry.
+        imagePullPolicy: Never
+        command: [python, -m, annotation.main]
+        env:
+          - name: DATA_CONTROLLER_DB_URL
+            # Full FQDN required — workflow pod runs in argo namespace,
+            # postgres service lives in ml-system namespace.
+            value: "postgresql://mlflow:mlflow@postgres.ml-system.svc.cluster.local:5432/mlflow"
+          - name: ANNOTATION_SAMPLES_PER_RUN
+            value: "{{workflow.parameters.max-samples-to-annotate}}"

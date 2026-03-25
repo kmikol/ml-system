@@ -86,6 +86,15 @@ data:
     }
     {{- end }}
 
+    // Argo Workflows controller metrics — exposes argo_workflows_count and related gauges.
+    // Static address: no k8s discovery needed, no additional RBAC required.
+    prometheus.scrape "argo_workflows" {
+      targets         = [{"__address__" = "argo-workflows-workflow-controller-metrics.argo.svc.cluster.local:9090"}]
+      scrape_interval = "{{ .Values.alloy.scrapeIntervalSeconds }}s"
+      forward_to      = [prometheus.remote_write.local.receiver]
+      job_name        = "argo-workflows"
+    }
+
     prometheus.remote_write "local" {
       endpoint {
         url = "http://prometheus.{{ .Values.global.namespace }}.svc.cluster.local:{{ .Values.prometheus.port }}/api/v1/write"

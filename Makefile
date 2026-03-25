@@ -101,6 +101,7 @@ help: ## Show this help
 #   localhost:9001  →  30004  →  minio console
 #   localhost:5432  →  30005  →  postgres
 #   localhost:9000  →  30006  →  minio API
+#   localhost:2746  →  30007  →  argo-workflows UI
 #
 # First-time setup (one command):
 #   make k3d.bootstrap     ← create cluster, install KEDA, build + import images,
@@ -125,7 +126,7 @@ help: ## Show this help
 #
 # ═══════════════════════════════════════════════════════════════
 
-.PHONY: k3d.bootstrap k3d.create k3d.delete k3d.build k3d.import k3d.deploy k3d.status k3d.logs k3d.shell k3d.redeploy k3d.train k3d.annotate k3d.serve.restart k3d.keda.install k3d.drift.restart
+.PHONY: k3d.bootstrap k3d.create k3d.delete k3d.build k3d.import k3d.deploy k3d.status k3d.logs k3d.shell k3d.redeploy k3d.train k3d.annotate k3d.serve.restart k3d.keda.install k3d.drift.restart k3d.argo.install
 
 k3d.keda.install: ## Install KEDA into the cluster (run once after k3d.create)
 	@echo "$(CYAN)Installing KEDA...$(RESET)"
@@ -137,33 +138,56 @@ k3d.keda.install: ## Install KEDA into the cluster (run once after k3d.create)
 		--wait
 	@echo "$(GREEN)KEDA installed. Run 'make k3d.deploy' to apply the ScaledObject.$(RESET)"
 
-k3d.bootstrap: ## First-time setup: create cluster, install KEDA, build+import images, deploy, seed data, train, restart serving
+k3d.argo.install: ## Install Argo Workflows + Argo Events into the cluster (run once after k3d.create)
+	@echo "$(CYAN)Installing Argo Workflows...$(RESET)"
+	helm repo add argo https://argoproj.github.io/argo-helm 2>/dev/null || true
+	helm repo update argo
+	helm upgrade --install argo-workflows argo/argo-workflows \
+		--namespace argo \
+		--create-namespace \
+		--set "server.authModes={server}" \
+		--set server.serviceType=NodePort \
+		--set server.serviceNodePort=30007 \
+		--wait
+	@echo "$(CYAN)Installing Argo Events...$(RESET)"
+	helm upgrade --install argo-events argo/argo-events \
+		--namespace argo-events \
+		--create-namespace \
+		--set crds.install=true \
+		--wait
+	@echo "$(GREEN)Argo Workflows UI: http://localhost:2746$(RESET)"
+	@echo "$(GREEN)Argo Workflows + Argo Events installed. Run 'make k3d.deploy' to apply EventBus/EventSource/Sensor.$(RESET)"
+
+k3d.bootstrap: ## First-time setup: create cluster, install KEDA+Argo, build+import images, deploy, seed data, train, restart serving
 	@echo "$(CYAN)╔══════════════════════════════════════════════════════╗$(RESET)"
 	@echo "$(CYAN)║  k3d bootstrap - full first-time startup             ║$(RESET)"
 	@echo "$(CYAN)╚══════════════════════════════════════════════════════╝$(RESET)"
 	@echo ""
-	@echo "$(CYAN)[1/8] Creating k3d cluster...$(RESET)"
+	@echo "$(CYAN)[1/9] Creating k3d cluster...$(RESET)"
 	@$(MAKE) --no-print-directory k3d.create
 	@echo ""
-	@echo "$(CYAN)[2/8] Installing KEDA...$(RESET)"
+	@echo "$(CYAN)[2/9] Installing KEDA...$(RESET)"
 	@$(MAKE) --no-print-directory k3d.keda.install
 	@echo ""
-	@echo "$(CYAN)[3/8] Building Docker images...$(RESET)"
+	@echo "$(CYAN)[3/9] Installing Argo Workflows + Argo Events...$(RESET)"
+	@$(MAKE) --no-print-directory k3d.argo.install
+	@echo ""
+	@echo "$(CYAN)[4/9] Building Docker images...$(RESET)"
 	@$(MAKE) --no-print-directory k3d.build
 	@echo ""
-	@echo "$(CYAN)[4/8] Importing images into k3d...$(RESET)"
+	@echo "$(CYAN)[5/9] Importing images into k3d...$(RESET)"
 	@$(MAKE) --no-print-directory k3d.import
 	@echo ""
-	@echo "$(CYAN)[5/8] Deploying services with Helm...$(RESET)"
+	@echo "$(CYAN)[6/9] Deploying services with Helm...$(RESET)"
 	@$(MAKE) --no-print-directory k3d.deploy
 	@echo ""
-	@echo "$(CYAN)[6/8] Setting up dataset (prepare → seed → verify)...$(RESET)"
+	@echo "$(CYAN)[7/9] Setting up dataset (prepare → seed → verify)...$(RESET)"
 	@$(MAKE) --no-print-directory data.setup
 	@echo ""
-	@echo "$(CYAN)[7/8] Training model...$(RESET)"
+	@echo "$(CYAN)[8/9] Training model...$(RESET)"
 	@$(MAKE) --no-print-directory k3d.train
 	@echo ""
-	@echo "$(CYAN)[8/8] Restarting serving to load the trained model...$(RESET)"
+	@echo "$(CYAN)[9/9] Restarting serving to load the trained model...$(RESET)"
 	@$(MAKE) --no-print-directory k3d.serve.restart
 	@echo ""
 	@echo "$(GREEN)╔══════════════════════════════════════════════════════╗$(RESET)"
@@ -183,6 +207,7 @@ k3d.create: ## Create k3d cluster with port mappings
 	@echo "    localhost:9001  →  NodePort 30004  (minio console)"
 	@echo "    localhost:5432  →  NodePort 30005  (postgres)"
 	@echo "    localhost:9000  →  NodePort 30006  (minio API)"
+	@echo "    localhost:2746  →  NodePort 30007  (argo-workflows UI)"
 	@echo ""
 	k3d cluster create $(K3D_CLUSTER) \
 		--port "8000:30000@server:0" \
@@ -192,6 +217,7 @@ k3d.create: ## Create k3d cluster with port mappings
 		--port "9001:30004@server:0" \
 		--port "5432:30005@server:0" \
 		--port "9000:30006@server:0" \
+		--port "2746:30007@server:0" \
 		--k3s-arg "--disable=traefik@server:0"
 	kubectl create namespace $(K8S_NAMESPACE) --dry-run=client -o yaml | kubectl apply -f -
 	kubectl config set-context --current --namespace=$(K8S_NAMESPACE)
@@ -220,11 +246,14 @@ k3d.import: ## Import custom images into k3d's container runtime
 	k3d image import $(IMG_DRIFT) -c $(K3D_CLUSTER)
 	@echo "$(GREEN)Images imported.$(RESET)"
 
-k3d.deploy: ## Deploy (or upgrade) all services with Helm
+k3d.deploy: ## Deploy (or upgrade) all services with Helm, then apply Argo Events CRD instances
 	@echo "$(CYAN)Deploying with Helm...$(RESET)"
 	helm upgrade --install $(HELM_RELEASE) $(HELM_CHART) \
 		-f $(HELM_CHART)/values-local.yaml \
 		-n $(K8S_NAMESPACE)
+	@echo ""
+	@echo "$(CYAN)Applying Argo Events resources (SSA)...$(RESET)"
+	kubectl apply --server-side --force-conflicts -f k8s/argo/argo-events-resources.yaml
 	@echo ""
 	@echo "$(GREEN)Deployed. Waiting for pods...$(RESET)"
 	kubectl wait --for=condition=available deployment --all \
@@ -233,20 +262,27 @@ k3d.deploy: ## Deploy (or upgrade) all services with Helm
 	@$(MAKE) --no-print-directory k3d.status
 
 k3d.status: ## Show pods, services, and endpoints
-	@echo "$(CYAN)Pods:$(RESET)"
+	@echo "$(CYAN)Pods (ml-system):$(RESET)"
 	@kubectl get pods -n $(K8S_NAMESPACE) -o wide
+	@echo ""
+	@echo "$(CYAN)Pods (argo):$(RESET)"
+	@kubectl get pods -n argo 2>/dev/null || echo "  (argo namespace not yet installed)"
+	@echo ""
+	@echo "$(CYAN)Pods (argo-events):$(RESET)"
+	@kubectl get pods -n argo-events 2>/dev/null || echo "  (argo-events namespace not yet installed)"
 	@echo ""
 	@echo "$(CYAN)Services:$(RESET)"
 	@kubectl get svc -n $(K8S_NAMESPACE)
 	@echo ""
 	@echo "$(CYAN)Access:$(RESET)"
-	@echo "  Serving:       http://localhost:8000"
-	@echo "  MLflow:        http://localhost:5000"
-	@echo "  Grafana:       http://localhost:3000  (admin/admin)"
-	@echo "  Prometheus:    http://localhost:9090"
-	@echo "  MinIO console: http://localhost:9001  (minioadmin/minioadmin)"
-	@echo "  MinIO API:     http://localhost:9000  (minioadmin/minioadmin)"
-	@echo "  Postgres:      localhost:5432         (mlflow/mlflow, db=mlflow)"
+	@echo "  Serving:          http://localhost:8000"
+	@echo "  MLflow:           http://localhost:5000"
+	@echo "  Grafana:          http://localhost:3000  (admin/admin)"
+	@echo "  Prometheus:       http://localhost:9090"
+	@echo "  Argo Workflows:   http://localhost:2746"
+	@echo "  MinIO console:    http://localhost:9001  (minioadmin/minioadmin)"
+	@echo "  MinIO API:        http://localhost:9000  (minioadmin/minioadmin)"
+	@echo "  Postgres:         localhost:5432         (mlflow/mlflow, db=mlflow)"
 
 k3d.logs: ## Tail logs for a deployment (POD=fastapi-serving)
 	@if [ -z "$(POD)" ]; then \

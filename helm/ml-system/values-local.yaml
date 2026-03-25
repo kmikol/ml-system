@@ -53,3 +53,6 @@ minio:
 
 driftDetection:
   enabled: true
+
+alertmanager:
+  enabled: true

@@ -55,6 +55,11 @@ prometheus:
   scrapeIntervalSeconds: 15
   evaluationIntervalSeconds: 15
 
+alertmanager:
+  enabled: true
+  image: prom/alertmanager:v0.26.0
+  port: 9093
+
 grafana:
   enabled: true
   image: grafana/grafana:10.3.0

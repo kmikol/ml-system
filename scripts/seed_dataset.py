@@ -37,6 +37,8 @@ from shared.data_controller.dataset import DatasetController  # noqa: E402
 DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "v0")
 SPLITS = ["train", "val", "test"]
 
+REMAINING_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "remaining")
+
 
 def seed_split(ctrl: DatasetController, split: str, date_prefix: str) -> int:
     images_path = os.path.join(DATA_DIR, split, "images.npy")
@@ -75,6 +77,48 @@ def seed_split(ctrl: DatasetController, split: str, date_prefix: str) -> int:
     return count
 
 
+def seed_pool(ctrl: DatasetController, date_prefix: str) -> int:
+    """Seed data/remaining/ into dataset_samples as split='pool'.
+
+    Pool samples are NOT training data — they represent unlabelled production
+    data whose ground truth labels are known only in simulation. Storing them
+    here lets the annotation service look up labels via the standard JOIN
+    (prediction_id = sample_id) without polluting the training splits.
+
+    The annotation_annotated_count metric counts annotated predictions whose
+    prediction_id is NOT in a training split (train/val/test), so pool samples
+    that have been annotated correctly appear in that metric.
+    """
+    images_path = os.path.join(REMAINING_DIR, "images.npy")
+    labels_path = os.path.join(REMAINING_DIR, "labels.npy")
+    uuids_path = os.path.join(REMAINING_DIR, "uuids.npy")
+
+    if not os.path.exists(images_path):
+        print(f"  [pool] SKIP — {images_path} not found (run data.prepare first)")
+        return 0
+
+    images = np.load(images_path)
+    labels = np.load(labels_path)
+    uuids = np.load(uuids_path)
+
+    count = 0
+    for i, (img, label, sample_id) in enumerate(zip(images, labels, uuids)):
+        minio_path = f"{date_prefix}/{sample_id}.npy"
+        ctrl.store_sample(
+            sample_id=str(sample_id),
+            split="pool",
+            label=int(label),
+            image_2d=img.tolist(),
+            minio_path=minio_path,
+        )
+        count += 1
+        if (i + 1) % 500 == 0 or (i + 1) == len(images):
+            print(f"  [pool] {i + 1}/{len(images)} seeded...", end="\r")
+
+    print()
+    return count
+
+
 def main():
     print("Connecting to DatasetController...")
     ctrl = DatasetController()
@@ -88,6 +132,9 @@ def main():
         print(f"Seeding {split}...")
         n = seed_split(ctrl, split, date_prefix)
         totals[split] = n
+
+    print("Seeding pool (remaining data)...")
+    totals["pool"] = seed_pool(ctrl, date_prefix)
 
     print()
     print("Seeding complete:")

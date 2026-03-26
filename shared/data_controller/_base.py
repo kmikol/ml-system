@@ -82,6 +82,20 @@ SELECT COUNT(*) FROM predictions
 WHERE label IS NOT NULL AND timestamp >= %s;
 """
 
+_MARK_CANDIDATES_BATCH = """
+UPDATE predictions
+SET annotation_status = 'candidate'
+WHERE prediction_id IN (
+    SELECT p.prediction_id
+    FROM predictions p
+    JOIN dataset_samples d ON d.sample_id = p.prediction_id
+    WHERE p.annotation_status = 'none'
+    ORDER BY RANDOM()
+    LIMIT %s
+)
+RETURNING prediction_id;
+"""
+
 
 def _row_to_record(row: tuple) -> PredictRecord:
     (

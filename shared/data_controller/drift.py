@@ -13,6 +13,16 @@ from shared.data_controller._base import (
     _DataControllerBase,
     _row_to_record,
 )
+
+_COUNT_ANNOTATED = """
+SELECT COUNT(*)
+FROM predictions
+WHERE annotation_status = 'annotated'
+  AND prediction_id NOT IN (
+      SELECT sample_id FROM dataset_samples
+      WHERE split IN ('train', 'val', 'test')
+  );
+"""
 from shared.schemas.predict_record import PredictRecord
 
 
@@ -36,6 +46,16 @@ class DriftDataController(_DataControllerBase):
                 return [_row_to_record(row) for row in cur.fetchall()]
         except Exception as exc:
             raise DataControllerError(f"Failed to query predictions: {exc}") from exc
+
+    def get_annotated_count(self) -> int:
+        """Return total number of predictions with annotation_status='annotated'."""
+        try:
+            conn = self._connect()
+            with conn.cursor() as cur:
+                cur.execute(_COUNT_ANNOTATED)
+                return cur.fetchone()[0]
+        except Exception as exc:
+            raise DataControllerError(f"Failed to count annotated predictions: {exc}") from exc
 
     def get_labeled_predictions(self, since: datetime) -> list[PredictRecord]:
         """Return predictions that have a ground truth label, since *since*."""

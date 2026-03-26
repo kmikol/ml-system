@@ -9,6 +9,7 @@ from shared.config import require_env
 from shared.data_controller._base import (
     _COUNT_LABELS,
     _MARK_CANDIDATE,
+    _MARK_CANDIDATES_BATCH,
     _SELECT_WINDOW,
     DataControllerError,
     _DataControllerBase,
@@ -53,6 +54,30 @@ class SamplingDataController(_DataControllerBase):
             raise DataControllerError(
                 f"Failed to mark '{prediction_id}' as candidate: {exc}"
             ) from exc
+
+    def select_and_mark_candidates(self, limit: int) -> list[str]:
+        """Atomically select up to *limit* unannotated predictions that have a
+        matching entry in dataset_samples and advance them to 'candidate'.
+
+        Only predictions whose prediction_id exists in dataset_samples are
+        eligible — this ensures the annotation step can look up ground truth.
+
+        Returns:
+            List of prediction_ids that were marked as candidate.
+        """
+        try:
+            conn = self._connect()
+            with conn.cursor() as cur:
+                cur.execute(_MARK_CANDIDATES_BATCH, (limit,))
+                marked = [row[0] for row in cur.fetchall()]
+            conn.commit()
+            return marked
+        except Exception as exc:
+            try:
+                self._conn.rollback()
+            except Exception:
+                self._conn = None
+            raise DataControllerError(f"Failed to mark candidates: {exc}") from exc
 
     def count_labels_since(self, since: datetime) -> int:
         """Return the number of labeled predictions since *since*."""

@@ -32,7 +32,7 @@ IMG_SERVING    := ml-system-serving:latest
 IMG_TRAINING   := ml-system-training:latest
 IMG_MLFLOW     := ml-system-mlflow:latest
 IMG_ANNOTATION := ml-system-annotation:latest
-IMG_DRIFT      := ml-system-drift:latest
+IMG_ML_EXPORTER := ml-system-ml-exporter:latest
 
 TEST_COMPOSE := docker compose -f docker-compose.test.yml
 
@@ -126,7 +126,7 @@ help: ## Show this help
 #
 # ═══════════════════════════════════════════════════════════════
 
-.PHONY: k3d.bootstrap k3d.create k3d.delete k3d.build k3d.import k3d.deploy k3d.status k3d.logs k3d.shell k3d.redeploy k3d.train k3d.annotate k3d.serve.restart k3d.keda.install k3d.drift.restart k3d.argo.install
+.PHONY: k3d.bootstrap k3d.create k3d.delete k3d.build k3d.import k3d.deploy k3d.status k3d.logs k3d.shell k3d.redeploy k3d.train k3d.annotate k3d.serve.restart k3d.keda.install k3d.ml-exporter.restart k3d.argo.install
 
 k3d.keda.install: ## Install KEDA into the cluster (run once after k3d.create)
 	@echo "$(CYAN)Installing KEDA...$(RESET)"
@@ -232,7 +232,7 @@ k3d.delete: ## Delete k3d cluster and all its data
 	k3d cluster delete $(K3D_CLUSTER)
 	@echo "$(YELLOW)Cluster '$(K3D_CLUSTER)' deleted.$(RESET)"
 
-k3d.build: build ## Build all custom Docker images (serving, mlflow, drift, annotation)
+k3d.build: build ## Build all custom Docker images (serving, mlflow, ml-exporter, annotation)
 	@echo "$(GREEN)Images built. Run 'make k3d.import' to load them into the cluster.$(RESET)"
 
 k3d.import: ## Import custom images into k3d's container runtime
@@ -243,7 +243,7 @@ k3d.import: ## Import custom images into k3d's container runtime
 	@echo ""
 	k3d image import $(IMG_SERVING) -c $(K3D_CLUSTER)
 	k3d image import $(IMG_MLFLOW) -c $(K3D_CLUSTER)
-	k3d image import $(IMG_DRIFT) -c $(K3D_CLUSTER)
+	k3d image import $(IMG_ML_EXPORTER) -c $(K3D_CLUSTER)
 	k3d image import $(IMG_ANNOTATION) -c $(K3D_CLUSTER)
 	@echo "$(GREEN)Images imported.$(RESET)"
 
@@ -255,6 +255,7 @@ k3d.deploy: ## Deploy (or upgrade) all services with Helm, then apply Argo Event
 	@echo ""
 	@echo "$(CYAN)Applying Argo Events resources (SSA)...$(RESET)"
 	kubectl apply --server-side --force-conflicts -f k8s/argo/argo-events-resources.yaml
+	kubectl apply --server-side --force-conflicts -f k8s/argo/workflows/
 	@echo ""
 	@echo "$(GREEN)Deployed. Waiting for pods...$(RESET)"
 	kubectl wait --for=condition=available deployment --all \
@@ -311,14 +312,14 @@ k3d.redeploy: k3d.build k3d.import k3d.deploy ## Rebuild, import, and redeploy (
 	@# Required because imagePullPolicy:Never + latest tag means k8s won't
 	@# detect that the image content changed after k3d image import.
 	kubectl rollout restart deployment/fastapi-serving deployment/mlflow deployment/grafana deployment/alloy -n $(K8S_NAMESPACE)
-	@kubectl get deployment drift -n $(K8S_NAMESPACE) &>/dev/null && \
-		kubectl rollout restart deployment/drift -n $(K8S_NAMESPACE) || true
+	@kubectl get deployment ml-exporter -n $(K8S_NAMESPACE) &>/dev/null && \
+		kubectl rollout restart deployment/ml-exporter -n $(K8S_NAMESPACE) || true
 	kubectl rollout status deployment/fastapi-serving deployment/mlflow deployment/grafana deployment/alloy -n $(K8S_NAMESPACE) --timeout=120s
 	@echo "$(GREEN)Redeploy complete.$(RESET)"
 
-k3d.drift.restart: ## Restart drift detection pod
-	kubectl rollout restart deployment/drift -n $(K8S_NAMESPACE)
-	kubectl rollout status deployment/drift -n $(K8S_NAMESPACE) --timeout=60s
+k3d.ml-exporter.restart: ## Restart ml-exporter pod
+	kubectl rollout restart deployment/ml-exporter -n $(K8S_NAMESPACE)
+	kubectl rollout status deployment/ml-exporter -n $(K8S_NAMESPACE) --timeout=60s
 
 k3d.train: ## Build training image, run training job in k3d, stream logs, clean up
 	@echo "$(CYAN)Building training image...$(RESET)"
@@ -389,9 +390,9 @@ k3d.annotate: ## Build annotation image, run annotation job in k3d, stream logs,
 # BUILD
 # ═══════════════════════════════════════════════════════════════
 
-.PHONY: build build.serving build.training build.mlflow build.drift build.annotation
+.PHONY: build build.serving build.training build.mlflow build.ml-exporter build.annotation
 
-build: build.serving build.mlflow build.drift build.annotation ## Build all custom images (serving, mlflow, drift, annotation)
+build: build.serving build.mlflow build.ml-exporter build.annotation ## Build all custom images (serving, mlflow, ml-exporter, annotation)
 
 build.serving: ## Build serving image
 	docker build -t $(IMG_SERVING) -f serving/Dockerfile .
@@ -402,8 +403,8 @@ build.training: ## Build training image
 build.mlflow: ## Build mlflow image
 	docker build -t $(IMG_MLFLOW) -f shared/model_artifact_controller/mlflow/Dockerfile .
 
-build.drift: ## Build drift detection image
-	docker build -t $(IMG_DRIFT) -f monitoring/drift/Dockerfile .
+build.ml-exporter: ## Build ml-exporter image
+	docker build -t $(IMG_ML_EXPORTER) -f monitoring/ml_exporter/Dockerfile .
 
 build.annotation: ## Build annotation image
 	docker build -t $(IMG_ANNOTATION) -f annotation/Dockerfile .

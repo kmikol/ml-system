@@ -145,8 +145,14 @@ def main():
 
     logger.info("Loading dataset from DatasetController...")
     dataset_ctrl = DatasetController()
-    train_samples = dataset_ctrl.get_dataset_split("train")
-    val_samples = dataset_ctrl.get_dataset_split("val")
+    version_id = dataset_ctrl.get_latest_version()
+    if version_id is None:
+        raise RuntimeError(
+            "No dataset version found. Run scripts/seed_dataset.py before training."
+        )
+    logger.info(f"Using dataset version: {version_id}")
+    train_samples = dataset_ctrl.get_dataset_split(version_id, "train")
+    val_samples = dataset_ctrl.get_dataset_split(version_id, "val")
     logger.info(
         f"Dataset: {len(train_samples)} train, {len(val_samples)} val, "
         f"{NUM_CLASSES} classes, {INPUT_DIM} input_dim"
@@ -154,8 +160,8 @@ def main():
 
     if not train_samples or not val_samples:
         raise RuntimeError(
-            "Dataset split is empty. Expected non-empty 'train' and 'val' splits in the data "
-            "controller backend. Run dataset setup/seed before training."
+            "Dataset split is empty. Expected non-empty 'train' and 'val' splits in the "
+            f"latest dataset version '{version_id}'. Run scripts/seed_dataset.py first."
         )
 
     train_loader, val_loader = make_dataloaders(train_samples, val_samples, BATCH_SIZE)

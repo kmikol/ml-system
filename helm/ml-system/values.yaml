@@ -111,9 +111,9 @@ secrets:
   minioSecretKey: minioadmin
   postgresPassword: mlflow
 
-driftDetection:
+mlExporter:
   enabled: false
-  image: ml-system-drift:latest
+  image: ml-system-ml-exporter:latest
   port: 8001
   env:
     DATA_CONTROLLER_DB_URL: "postgresql://mlflow:mlflow@postgres:5432/mlflow"

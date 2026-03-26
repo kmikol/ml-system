@@ -13,6 +13,8 @@ venv
 site
 docs
 data
+!data/remaining/uuids.npy
+!data/remaining/labels.npy
 *.log
 *.tmp
 .idea

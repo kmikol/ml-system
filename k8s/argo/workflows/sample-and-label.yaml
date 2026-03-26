@@ -1,0 +1,73 @@
+# k8s/argo/workflows/sample-and-label.yaml
+#
+# WorkflowTemplate: two-step active learning pipeline triggered by PSI drift alert.
+#
+# Step 1 — sample:
+#   Selects up to max-samples-to-annotate predictions with annotation_status='none'
+#   and atomically advances them to annotation_status='candidate'.
+#
+# Step 2 — annotate (runs only after sample succeeds):
+#   Fetches all candidate prediction UUIDs, looks up their ground truth label
+#   from the file-based oracle (uuids.npy + labels.npy baked into the image),
+#   and writes each label back — advancing status to 'annotated'.
+#
+# Prerequisite: annotation image must be imported into k3d before this runs:
+#   make k3d.build && make k3d.import
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: sample-and-label
+  namespace: argo
+spec:
+  entrypoint: sample-and-label
+  arguments:
+    parameters:
+      - name: max-samples-to-annotate
+        value: "50"
+  templates:
+    - name: sample-and-label
+      steps:
+        - - name: sample
+            template: sample
+            arguments:
+              parameters:
+                - name: max-samples-to-annotate
+                  value: "{{workflow.parameters.max-samples-to-annotate}}"
+        - - name: annotate
+            template: annotate
+            arguments:
+              parameters:
+                - name: max-samples-to-annotate
+                  value: "{{workflow.parameters.max-samples-to-annotate}}"
+
+    - name: sample
+      inputs:
+        parameters:
+          - name: max-samples-to-annotate
+      container:
+        image: ml-system-annotation:latest
+        imagePullPolicy: Never
+        command: [python, -m, sampling.main]
+        env:
+          - name: DATA_CONTROLLER_DB_URL
+            # Full FQDN required — workflow pod runs in argo namespace,
+            # postgres service lives in ml-system namespace.
+            value: "postgresql://mlflow:mlflow@postgres.ml-system.svc.cluster.local:5432/mlflow"
+          - name: SAMPLING_CANDIDATES_PER_RUN
+            value: "{{inputs.parameters.max-samples-to-annotate}}"
+
+    - name: annotate
+      inputs:
+        parameters:
+          - name: max-samples-to-annotate
+      container:
+        image: ml-system-annotation:latest
+        imagePullPolicy: Never
+        command: [python, -m, annotation.main]
+        env:
+          - name: DATA_CONTROLLER_DB_URL
+            value: "postgresql://mlflow:mlflow@postgres.ml-system.svc.cluster.local:5432/mlflow"
+          - name: ANNOTATION_SAMPLES_PER_RUN
+            value: "{{inputs.parameters.max-samples-to-annotate}}"
+          - name: ANNOTATION_ORACLE_PATH
+            value: "/app/data/remaining"

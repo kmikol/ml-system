@@ -4,13 +4,14 @@
 Verify that the seeded dataset is consistent between Postgres and MinIO.
 
 Checks:
-  - Each split has the expected number of samples
+  - A dataset version exists
+  - Each split has samples
   - All 10 digit labels are present in the training split
-  - A spot-check sample downloads correctly from MinIO and matches Postgres
-  - UUIDs from uuids.npy are present as sample_ids in the database
+  - A spot-check sample downloads correctly from MinIO (correct shape)
+  - UUIDs from uuids.npy are present in the database
 
 Usage:
-    DATA_CONTROLLER_DB_URL=... DATASET_S3_ENDPOINT_URL=... DATASET_BUCKET=... \
+    DATA_CONTROLLER_DB_URL=... DATASET_S3_ENDPOINT_URL=... DATASET_BUCKET=... \\
     PYTHONPATH=. python scripts/verify_dataset.py
 """
 
@@ -33,41 +34,50 @@ _UUID_SPOT_CHECK_COUNT = 10
 def main():
     ctrl = DatasetController()
 
+    print("Checking dataset version...")
+    version_id = ctrl.get_latest_version()
+    if version_id is None:
+        print("  ERROR: no dataset version found. Run scripts/seed_dataset.py first.")
+        sys.exit(1)
+    print(f"  Latest version: {version_id}")
+
     print("Checking sample counts...")
+    train = None
     for split in ["train", "val", "test"]:
-        samples = ctrl.get_dataset_split(split)
+        samples = ctrl.get_dataset_split(version_id, split)
         labels = sorted(set(s["label"] for s in samples))
         print(f"  {split}: {len(samples)} samples, labels={labels}")
         if not samples:
-            print(f"  ERROR: no samples in {split}")
+            print(f"  ERROR: no samples in split '{split}' for version '{version_id}'")
             sys.exit(1)
+        if split == "train":
+            train = samples
 
-    print("Spot-checking MinIO ↔ Postgres pixel values...")
-    train = ctrl.get_dataset_split("train")
+    if len(set(s["label"] for s in train)) < 10:
+        print("  WARNING: training split has fewer than 10 distinct labels")
+
+    print("Spot-checking MinIO image download...")
     sample = train[0]
     minio_img = ctrl.download_image(sample["minio_path"])
-    pg_img = np.array(sample["image"], dtype=np.float32)
-
-    if not np.allclose(minio_img, pg_img, atol=1e-5):
-        print("  ERROR: pixel values from MinIO do not match Postgres")
-        print(f"  max diff: {np.abs(minio_img - pg_img).max()}")
+    if minio_img.shape != (14, 14):
+        print(f"  ERROR: expected image shape (14, 14), got {minio_img.shape}")
         sys.exit(1)
+    print(f"  OK: image shape {minio_img.shape}, dtype {minio_img.dtype}")
 
-    print("  OK: MinIO == Postgres pixel values")
-
-    print("Checking UUID propagation (uuids.npy → database sample_ids)...")
+    print("Checking UUID propagation (uuids.npy → database)...")
     uuids_path = os.path.join(DATA_DIR, "train", "uuids.npy")
     if not os.path.exists(uuids_path):
         print(f"  SKIP — {uuids_path} not found (run data.prepare first)")
     else:
         uuids = np.load(uuids_path)
-        db_sample_ids = {s["sample_id"] for s in train}
-        missing = [u for u in uuids[:_UUID_SPOT_CHECK_COUNT] if str(u) not in db_sample_ids]
+        # uuid values from DB are uuid.UUID objects; normalise for comparison
+        db_uuids = {str(s["uuid"]) for s in train}
+        missing = [u for u in uuids[:_UUID_SPOT_CHECK_COUNT] if str(u) not in db_uuids]
         if missing:
             print(f"  ERROR: {len(missing)} UUIDs from uuids.npy not found in database")
             print(f"  First missing: {missing[0]}")
             sys.exit(1)
-        print("  OK: UUIDs from uuids.npy present in database")
+        print(f"  OK: {_UUID_SPOT_CHECK_COUNT} UUIDs from uuids.npy present in database")
 
     print("Verification passed.")
 

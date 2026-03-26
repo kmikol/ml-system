@@ -35,7 +35,7 @@ from collections import defaultdict
 
 import numpy as np
 
-_POOL_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "remaining", "images.npy")
+_DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "remaining")
 _POOL_SIZE = 1_000  # payloads pre-serialized at startup
 
 HEADERS = {"Content-Type": "application/json"}
@@ -48,16 +48,24 @@ _inverted_pool: list[bytes] = []
 
 
 def _load_pools() -> tuple[list[bytes], list[bytes]]:
-    """Load remaining MNIST images and pre-serialize normal and inverted pools."""
+    """Load remaining MNIST images and pre-serialize normal and inverted pools.
+
+    Each payload includes the sample UUID, which the serving service stores as
+    predictions.uuid.  This enables the annotation job to look up the ground
+    truth label from the file-based oracle (uuids.npy + labels.npy).
+    """
+    images_path = os.path.join(_DATA_DIR, "images.npy")
+    uuids_path = os.path.join(_DATA_DIR, "uuids.npy")
     try:
-        images = np.load(_POOL_PATH)  # shape (N, 14, 14), float32
-    except FileNotFoundError:
-        print(f"ERROR: {_POOL_PATH} not found. Run 'make data.prepare' first.", file=sys.stderr)
+        images = np.load(images_path)  # shape (N, 14, 14), float32
+        uuids = np.load(uuids_path)    # shape (N,) str
+    except FileNotFoundError as e:
+        print(f"ERROR: {e}. Run 'make data.prepare' first.", file=sys.stderr)
         sys.exit(1)
     print(f"Loaded {len(images):,} images. Pre-serializing {_POOL_SIZE:,} payloads each...", flush=True)
     idx = np.random.randint(0, len(images), size=_POOL_SIZE)
-    normal = [json.dumps({"image": images[i].tolist()}).encode() for i in idx]
-    inverted = [json.dumps({"image": (1.0 - images[i]).tolist()}).encode() for i in idx]
+    normal = [json.dumps({"image": images[i].tolist(), "uuid": str(uuids[i])}).encode() for i in idx]
+    inverted = [json.dumps({"image": (1.0 - images[i]).tolist(), "uuid": str(uuids[i])}).encode() for i in idx]
     return normal, inverted
 
 

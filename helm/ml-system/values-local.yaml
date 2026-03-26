@@ -51,7 +51,7 @@ minio:
     apiNodePort: 30006
     consoleNodePort: 30004
 
-driftDetection:
+mlExporter:
   enabled: true
 
 alertmanager:

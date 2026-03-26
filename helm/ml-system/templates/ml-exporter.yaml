@@ -1,29 +1,29 @@
-{{- if .Values.driftDetection.enabled }}
+{{- if .Values.mlExporter.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: drift
+  name: ml-exporter
   namespace: {{ .Values.global.namespace }}
   labels:
-    app: drift
+    app: ml-exporter
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: drift
+      app: ml-exporter
   template:
     metadata:
       labels:
-        app: drift
+        app: ml-exporter
     spec:
       containers:
-        - name: drift
-          image: {{ .Values.driftDetection.image }}
+        - name: ml-exporter
+          image: {{ .Values.mlExporter.image }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
           ports:
-            - containerPort: {{ .Values.driftDetection.port }}
+            - containerPort: {{ .Values.mlExporter.port }}
           env:
-            {{- range $key, $val := .Values.driftDetection.env }}
+            {{- range $key, $val := .Values.mlExporter.env }}
             - name: {{ $key }}
               value: {{ $val | quote }}
             {{- end }}
@@ -40,23 +40,23 @@ spec:
           readinessProbe:
             httpGet:
               path: /health
-              port: {{ .Values.driftDetection.port }}
+              port: {{ .Values.mlExporter.port }}
             initialDelaySeconds: 5
             periodSeconds: 5
             failureThreshold: 12
           resources:
-            {{- toYaml .Values.driftDetection.resources | nindent 12 }}
+            {{- toYaml .Values.mlExporter.resources | nindent 12 }}
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: drift
+  name: ml-exporter
   namespace: {{ .Values.global.namespace }}
 spec:
-  type: {{ .Values.driftDetection.service.type | default "ClusterIP" }}
+  type: {{ .Values.mlExporter.service.type | default "ClusterIP" }}
   ports:
-    - port: {{ .Values.driftDetection.port }}
-      targetPort: {{ .Values.driftDetection.port }}
+    - port: {{ .Values.mlExporter.port }}
+      targetPort: {{ .Values.mlExporter.port }}
   selector:
-    app: drift
+    app: ml-exporter
 {{- end }}

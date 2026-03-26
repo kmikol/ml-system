@@ -1,61 +1,53 @@
 # shared/data_controller/dataset.py
-"""DatasetController — versioned dataset samples in Postgres (metadata) and MinIO (images)."""
+"""DatasetController — versioned dataset management in Postgres (metadata) and MinIO (images)."""
 
 from __future__ import annotations
 
 import os
+from uuid import UUID
 
 from shared.config import require_env
 from shared.data_controller._base import DataControllerError, _DataControllerBase
 
-# ── SQL — dataset_samples table ───────────────────────────────────────────────
+# ── SQL ───────────────────────────────────────────────────────────────────────
 
-_CREATE_DATASET_TABLE = """
-CREATE TABLE IF NOT EXISTS dataset_samples (
-    sample_id  TEXT    PRIMARY KEY,
-    split      TEXT    NOT NULL,
-    label      INTEGER NOT NULL,
-    minio_path TEXT    NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_dataset_samples_split
-    ON dataset_samples (split);
+_INSERT_SAMPLE = """
+INSERT INTO dataset_samples (uuid, version_id, split, label, minio_path)
+VALUES (%s, %s, %s, %s, %s)
+ON CONFLICT (uuid, version_id) DO NOTHING;
 """
 
-_INSERT_DATASET_SAMPLE = """
-INSERT INTO dataset_samples (sample_id, split, label, minio_path)
-VALUES (%s, %s, %s, %s)
-ON CONFLICT (sample_id) DO NOTHING;
-"""
-
-_SELECT_DATASET_SPLIT = """
-SELECT sample_id, label, minio_path
+_SELECT_SPLIT = """
+SELECT uuid, label, minio_path
 FROM dataset_samples
-WHERE split = %s
-ORDER BY sample_id;
+WHERE version_id = %s AND split = %s
+ORDER BY uuid;
+"""
+
+# Return the version_id whose most-recently-inserted row has the latest
+# created_at timestamp — i.e. the last version seeded.
+_SELECT_LATEST_VERSION = """
+SELECT version_id
+FROM dataset_samples
+GROUP BY version_id
+ORDER BY MAX(created_at) DESC
+LIMIT 1;
 """
 
 
 class DatasetController(_DataControllerBase):
     """Manages versioned dataset samples stored in Postgres (metadata) and MinIO (images).
 
-    Postgres is the index: it maps sample_id → split, label, minio_path.
-    MinIO holds the actual image bytes (float32 .npy files).
-    """
+    Schema:
+      - ``dataset_samples``: membership table — which sample UUIDs belong to each
+        dataset version/split, together with their label and MinIO path.
 
-    def _ensure_table(self) -> None:
-        try:
-            conn = self._connect()
-            with conn.cursor() as cur:
-                cur.execute(_CREATE_DATASET_TABLE)
-            conn.commit()
-        except Exception as exc:
-            raise DataControllerError(
-                f"Failed to create dataset_samples table: {exc}"
-            ) from exc
+    Postgres holds metadata and MinIO holds the actual image bytes (.npy files).
+    """
 
     def __init__(self) -> None:
         super().__init__(require_env("DATA_CONTROLLER_DB_URL"))
-        import boto3  # lazy — only needed by dataset controller
+        import boto3  # lazy — only needed by the dataset controller
 
         self._s3 = boto3.client(
             "s3",
@@ -65,65 +57,101 @@ class DatasetController(_DataControllerBase):
         )
         self._bucket = require_env("DATASET_BUCKET")
 
+    # ── Sample management ─────────────────────────────────────────────────────
+
     def store_sample(
-        self, sample_id: str, split: str, label: int, image_2d: list, minio_path: str
+        self,
+        uuid: UUID,
+        version_id: str,
+        split: str,
+        label: int,
+        image_2d: list,
+        minio_path: str,
     ) -> None:
-        """Upload image to MinIO and insert metadata row into Postgres.
+        """Upload image to MinIO and upsert the sample row into ``dataset_samples``.
+
+        Idempotent: ON CONFLICT (uuid, version_id) DO NOTHING — re-seeding the
+        same sample into the same version is safe.
 
         Args:
-            sample_id: Unique identifier for this sample (UUID).
-            split: Dataset split ('train', 'val', 'test').
+            uuid: Stable UUID for this sample (assigned at data-preparation time).
+            version_id: Dataset version this sample belongs to (e.g. ``'v0'``).
+            split: One of ``'train'``, ``'val'``, ``'test'``.
             label: Ground truth class label (0–9).
             image_2d: 14×14 float32 pixel values in [0, 1].
-            minio_path: Key within the bucket (e.g. '20260322/{uuid}.npy').
+            minio_path: Key within the bucket (e.g. ``'20260322/{uuid}.npy'``).
         """
         import io
 
         import numpy as np
 
-        # Upload to MinIO
         buf = io.BytesIO()
         np.save(buf, np.array(image_2d, dtype=np.float32))
         buf.seek(0)
         self._s3.upload_fileobj(buf, self._bucket, minio_path)
 
-        # Insert metadata
         try:
             conn = self._connect()
             with conn.cursor() as cur:
-                cur.execute(_INSERT_DATASET_SAMPLE, (sample_id, split, label, minio_path))
+                cur.execute(_INSERT_SAMPLE, (uuid, version_id, split, label, minio_path))
             conn.commit()
         except Exception as exc:
             try:
                 self._conn.rollback()
             except Exception:
                 self._conn = None
-            raise DataControllerError(f"Failed to store sample '{sample_id}': {exc}") from exc
+            raise DataControllerError(
+                f"Failed to store sample '{uuid}': {exc}"
+            ) from exc
 
-    def get_dataset_split(self, split: str) -> list[dict]:
-        """Fetch all samples for a split — queries Postgres for paths, loads images from MinIO.
+    # ── Data retrieval ────────────────────────────────────────────────────────
 
-        Returns:
-            List of dicts with keys: sample_id, label, image (14×14 ndarray), minio_path.
-        """
-
-
+    def get_latest_version(self) -> str | None:
+        """Return the most recently seeded dataset version ID, or ``None`` if none exist."""
         try:
             conn = self._connect()
             with conn.cursor() as cur:
-                cur.execute(_SELECT_DATASET_SPLIT, (split,))
+                cur.execute(_SELECT_LATEST_VERSION)
+                row = cur.fetchone()
+            return row[0] if row else None
+        except Exception as exc:
+            raise DataControllerError(
+                f"Failed to query latest version: {exc}"
+            ) from exc
+
+    def get_dataset_split(self, version_id: str, split: str) -> list[dict]:
+        """Fetch all samples for a version+split, loading images from MinIO.
+
+        Args:
+            version_id: Dataset version to query (e.g. ``'v0'``).
+            split: One of ``'train'``, ``'val'``, ``'test'``.
+
+        Returns:
+            List of dicts with keys: ``uuid``, ``label``,
+            ``image`` (14×14 ndarray), ``minio_path``.
+        """
+        try:
+            conn = self._connect()
+            with conn.cursor() as cur:
+                cur.execute(_SELECT_SPLIT, (version_id, split))
                 rows = cur.fetchall()
         except Exception as exc:
-            raise DataControllerError(f"Failed to query split '{split}': {exc}") from exc
+            raise DataControllerError(
+                f"Failed to query split '{split}' for version '{version_id}': {exc}"
+            ) from exc
 
-        samples = []
-        for sample_id, label, minio_path in rows:
-            image = self.download_image(minio_path)
-            samples.append({"sample_id": sample_id, "label": label, "image": image, "minio_path": minio_path})
-        return samples
+        return [
+            {
+                "uuid": uuid,
+                "label": label,
+                "image": self.download_image(minio_path),
+                "minio_path": minio_path,
+            }
+            for uuid, label, minio_path in rows
+        ]
 
     def download_image(self, minio_path: str):
-        """Download and deserialize a single image .npy from MinIO."""
+        """Download and deserialize a single image .npy file from MinIO."""
         import io
 
         import numpy as np

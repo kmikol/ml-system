@@ -4,28 +4,28 @@ No Postgres or external services required — FakeDataController is fully in-mem
 """
 
 from datetime import UTC, datetime
+from uuid import UUID, uuid4
 
 from shared.data_controller.fake import FakeDataController
 from shared.schemas.predict_record import PredictRecord
 
 
 def _record(
-    prediction_id: str = "pred-1",
+    uuid: UUID | None = None,
     timestamp: datetime | None = None,
     model_version: str = "v1",
-    label: int | None = None,
+    annotated_label: int | None = None,
     annotation_status: str = "none",
 ) -> PredictRecord:
     return PredictRecord(
-        prediction_id=prediction_id,
+        uuid=uuid or uuid4(),
         timestamp=timestamp or datetime(2026, 1, 1, tzinfo=UTC),
         model_version=model_version,
-        image=[[0.0] * 14] * 14,
         embedding=[0.0] * 32,
         prediction=0,
         confidence=0.9,
         prediction_distribution=[0.1] * 10,
-        label=label,
+        annotated_label=annotated_label,
         annotation_status=annotation_status,
     )
 
@@ -54,33 +54,39 @@ class TestStorePrediction:
 class TestGetPredictions:
     def test_returns_records_since(self):
         ctrl = FakeDataController()
-        ctrl.store_prediction(_record("p1", datetime(2026, 1, 1, tzinfo=UTC)))
-        ctrl.store_prediction(_record("p2", datetime(2026, 1, 2, tzinfo=UTC)))
+        u1 = uuid4()
+        u2 = uuid4()
+        ctrl.store_prediction(_record(u1, datetime(2026, 1, 1, tzinfo=UTC)))
+        ctrl.store_prediction(_record(u2, datetime(2026, 1, 2, tzinfo=UTC)))
 
         results = ctrl.get_predictions(since=datetime(2026, 1, 2, tzinfo=UTC))
-        assert [r.prediction_id for r in results] == ["p2"]
+        assert [r.uuid for r in results] == [u2]
 
     def test_filters_by_until(self):
         ctrl = FakeDataController()
-        ctrl.store_prediction(_record("p1", datetime(2026, 1, 1, tzinfo=UTC)))
-        ctrl.store_prediction(_record("p2", datetime(2026, 1, 3, tzinfo=UTC)))
+        u1 = uuid4()
+        u2 = uuid4()
+        ctrl.store_prediction(_record(u1, datetime(2026, 1, 1, tzinfo=UTC)))
+        ctrl.store_prediction(_record(u2, datetime(2026, 1, 3, tzinfo=UTC)))
 
         results = ctrl.get_predictions(
             since=datetime(2026, 1, 1, tzinfo=UTC),
             until=datetime(2026, 1, 2, tzinfo=UTC),
         )
-        assert [r.prediction_id for r in results] == ["p1"]
+        assert [r.uuid for r in results] == [u1]
 
     def test_filters_by_model_version(self):
         ctrl = FakeDataController()
-        ctrl.store_prediction(_record("p1", model_version="v1"))
-        ctrl.store_prediction(_record("p2", model_version="v2"))
+        u1 = uuid4()
+        u2 = uuid4()
+        ctrl.store_prediction(_record(u1, model_version="v1"))
+        ctrl.store_prediction(_record(u2, model_version="v2"))
 
         results = ctrl.get_predictions(
             since=datetime(2026, 1, 1, tzinfo=UTC),
             model_version="v2",
         )
-        assert [r.prediction_id for r in results] == ["p2"]
+        assert [r.uuid for r in results] == [u2]
 
     def test_returns_empty_when_no_match(self):
         ctrl = FakeDataController()
@@ -92,21 +98,25 @@ class TestGetPredictions:
 
 
 class TestGetLabeledPredictions:
-    def test_returns_only_labeled(self):
+    def test_returns_only_annotated_labeled(self):
         ctrl = FakeDataController()
-        ctrl.store_prediction(_record("p1", label=None))
-        ctrl.store_prediction(_record("p2", label=3))
+        u1 = uuid4()
+        u2 = uuid4()
+        ctrl.store_prediction(_record(u1, annotated_label=None))
+        ctrl.store_prediction(_record(u2, annotated_label=3))
 
         results = ctrl.get_labeled_predictions(since=datetime(2026, 1, 1, tzinfo=UTC))
-        assert [r.prediction_id for r in results] == ["p2"]
+        assert [r.uuid for r in results] == [u2]
 
     def test_filters_by_since(self):
         ctrl = FakeDataController()
-        ctrl.store_prediction(_record("p1", datetime(2026, 1, 1, tzinfo=UTC), label=1))
-        ctrl.store_prediction(_record("p2", datetime(2026, 1, 3, tzinfo=UTC), label=2))
+        u1 = uuid4()
+        u2 = uuid4()
+        ctrl.store_prediction(_record(u1, datetime(2026, 1, 1, tzinfo=UTC), annotated_label=1))
+        ctrl.store_prediction(_record(u2, datetime(2026, 1, 3, tzinfo=UTC), annotated_label=2))
 
         results = ctrl.get_labeled_predictions(since=datetime(2026, 1, 2, tzinfo=UTC))
-        assert [r.prediction_id for r in results] == ["p2"]
+        assert [r.uuid for r in results] == [u2]
 
 
 # ── mark_candidate ────────────────────────────────────────────────────────────
@@ -115,91 +125,101 @@ class TestGetLabeledPredictions:
 class TestMarkCandidate:
     def test_advances_status_to_candidate(self):
         ctrl = FakeDataController()
-        ctrl.store_prediction(_record("p1"))
-        ctrl.mark_candidate("p1")
+        uid = uuid4()
+        ctrl.store_prediction(_record(uid))
+        ctrl.mark_candidate(uid)
         assert ctrl._records[0].annotation_status == "candidate"
 
     def test_ignores_already_annotated(self):
         ctrl = FakeDataController()
-        ctrl.store_prediction(_record("p1", annotation_status="annotated"))
-        ctrl.mark_candidate("p1")
+        uid = uuid4()
+        ctrl.store_prediction(_record(uid, annotation_status="annotated"))
+        ctrl.mark_candidate(uid)
         assert ctrl._records[0].annotation_status == "annotated"
 
     def test_ignores_unknown_id(self):
         ctrl = FakeDataController()
-        ctrl.mark_candidate("nonexistent")  # must not raise
+        ctrl.mark_candidate(uuid4())  # must not raise
+
+
+# ── select_and_mark_candidates ────────────────────────────────────────────────
+
+
+class TestSelectAndMarkCandidates:
+    def test_marks_eligible_predictions(self):
+        ctrl = FakeDataController()
+        uid = uuid4()
+        ctrl.store_prediction(_record(uid))
+
+        marked = ctrl.select_and_mark_candidates(limit=10)
+
+        assert uid in marked
+        assert ctrl._records[0].annotation_status == "candidate"
+
+    def test_skips_already_candidate_or_annotated(self):
+        ctrl = FakeDataController()
+        u1 = uuid4()
+        u2 = uuid4()
+        ctrl.store_prediction(_record(u1, annotation_status="candidate"))
+        ctrl.store_prediction(_record(u2, annotation_status="annotated"))
+
+        marked = ctrl.select_and_mark_candidates(limit=10)
+        assert marked == []
+
+    def test_respects_limit(self):
+        ctrl = FakeDataController()
+        for _ in range(5):
+            ctrl.store_prediction(_record())
+
+        marked = ctrl.select_and_mark_candidates(limit=3)
+        assert len(marked) == 3
+        candidate_count = sum(1 for r in ctrl._records if r.annotation_status == "candidate")
+        assert candidate_count == 3
 
 
 # ── write_label ───────────────────────────────────────────────────────────────
 
 
 class TestWriteLabel:
-    def test_sets_label_and_annotated_status(self):
+    def test_sets_annotated_label_and_status(self):
         ctrl = FakeDataController()
-        ctrl.store_prediction(_record("p1"))
-        ctrl.write_label("p1", 7)
-        assert ctrl._records[0].label == 7
+        uid = uuid4()
+        ctrl.store_prediction(_record(uid))
+        ctrl.write_label(uid, 7)
+        assert ctrl._records[0].annotated_label == 7
         assert ctrl._records[0].annotation_status == "annotated"
 
     def test_ignores_unknown_id(self):
         ctrl = FakeDataController()
-        ctrl.write_label("nonexistent", 5)  # must not raise
-
-
-# ── count_labels_since ────────────────────────────────────────────────────────
-
-
-class TestCountLabelsSince:
-    def test_counts_labeled_records_since(self):
-        ctrl = FakeDataController()
-        ctrl.store_prediction(_record("p1", datetime(2026, 1, 1, tzinfo=UTC), label=1))
-        ctrl.store_prediction(_record("p2", datetime(2026, 1, 3, tzinfo=UTC), label=2))
-        ctrl.store_prediction(_record("p3", datetime(2026, 1, 3, tzinfo=UTC), label=None))
-
-        count = ctrl.count_labels_since(since=datetime(2026, 1, 2, tzinfo=UTC))
-        assert count == 1
-
-    def test_returns_zero_when_none(self):
-        ctrl = FakeDataController()
-        count = ctrl.count_labels_since(since=datetime(2026, 1, 1, tzinfo=UTC))
-        assert count == 0
+        ctrl.write_label(uuid4(), 5)  # must not raise
 
 
 # ── get_candidates ────────────────────────────────────────────────────────────
 
 
 class TestGetCandidates:
-    def test_returns_candidates_with_dataset_labels(self):
+    def test_returns_candidate_uuids(self):
         ctrl = FakeDataController()
-        ctrl.store_prediction(_record("p1", annotation_status="candidate"))
-        ctrl._dataset_labels["p1"] = 3
+        uid = uuid4()
+        ctrl.store_prediction(_record(uid, annotation_status="candidate"))
 
         results = ctrl.get_candidates(limit=10)
-        assert results == [("p1", 3)]
+        assert uid in results
 
     def test_excludes_non_candidate_status(self):
         ctrl = FakeDataController()
-        ctrl.store_prediction(_record("p1", annotation_status="none"))
-        ctrl.store_prediction(_record("p2", annotation_status="annotated"))
-        ctrl._dataset_labels["p1"] = 1
-        ctrl._dataset_labels["p2"] = 2
-
-        results = ctrl.get_candidates(limit=10)
-        assert results == []
-
-    def test_excludes_candidates_without_dataset_label(self):
-        ctrl = FakeDataController()
-        ctrl.store_prediction(_record("p1", annotation_status="candidate"))
-        # no entry in _dataset_labels for p1
+        u1 = uuid4()
+        u2 = uuid4()
+        ctrl.store_prediction(_record(u1, annotation_status="none"))
+        ctrl.store_prediction(_record(u2, annotation_status="annotated"))
 
         results = ctrl.get_candidates(limit=10)
         assert results == []
 
     def test_respects_limit(self):
         ctrl = FakeDataController()
-        for i in range(5):
-            ctrl.store_prediction(_record(f"p{i}", annotation_status="candidate"))
-            ctrl._dataset_labels[f"p{i}"] = i
+        for _ in range(5):
+            ctrl.store_prediction(_record(annotation_status="candidate"))
 
         results = ctrl.get_candidates(limit=3)
         assert len(results) == 3

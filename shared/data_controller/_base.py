@@ -137,7 +137,6 @@ WHERE annotation_status = 'annotated'
   AND uuid NOT IN (SELECT uuid FROM dataset_samples);
 """
 
-
 def _row_to_record(row: tuple) -> PredictRecord:
     (
         uuid, timestamp, model_version,

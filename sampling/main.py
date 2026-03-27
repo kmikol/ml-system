@@ -53,10 +53,7 @@ def main() -> None:
         sys.exit(1)
 
     if not marked:
-        logger.info(
-            "No unannotated predictions with matching dataset entries found. "
-            "Nothing to mark."
-        )
+        logger.info("No unannotated predictions found. Nothing to mark.")
         return
 
     logger.info("Marked %d prediction(s) as candidate.", len(marked))

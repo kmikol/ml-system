@@ -18,5 +18,6 @@ class PredictRecord(BaseModel):
     prediction: int
     confidence: float
     prediction_distribution: list[float]
+    mahalanobis_distance: float | None = None
     annotation_status: Literal["none", "candidate", "annotated"] = "none"
     annotated_label: int | None = None  # written by annotation job

@@ -30,7 +30,7 @@ class TestMainSelectsAndMarksCandidates:
         with patch("sampling.main.SamplingDataController", return_value=ctrl):
             main()
 
-        ctrl.select_and_mark_candidates.assert_called_once_with(limit=25)
+        ctrl.select_and_mark_candidates.assert_called_once_with(limit=25, strategy="random")
 
     def test_uses_default_limit_when_env_absent(self, monkeypatch):
         monkeypatch.delenv("SAMPLING_CANDIDATES_PER_RUN", raising=False)
@@ -39,7 +39,43 @@ class TestMainSelectsAndMarksCandidates:
         with patch("sampling.main.SamplingDataController", return_value=ctrl):
             main()
 
-        ctrl.select_and_mark_candidates.assert_called_once_with(limit=50)
+        ctrl.select_and_mark_candidates.assert_called_once_with(limit=50, strategy="random")
+
+    def test_uses_default_strategy_when_env_absent(self, monkeypatch):
+        monkeypatch.delenv("SAMPLING_STRATEGY", raising=False)
+        ctrl = _make_ctrl([uuid4()])
+
+        with patch("sampling.main.SamplingDataController", return_value=ctrl):
+            main()
+
+        ctrl.select_and_mark_candidates.assert_called_once_with(limit=50, strategy="random")
+
+    def test_uses_low_confidence_strategy(self, monkeypatch):
+        monkeypatch.setenv("SAMPLING_STRATEGY", "low_confidence")
+        ctrl = _make_ctrl([uuid4()])
+
+        with patch("sampling.main.SamplingDataController", return_value=ctrl):
+            main()
+
+        ctrl.select_and_mark_candidates.assert_called_once_with(limit=50, strategy="low_confidence")
+
+    def test_uses_high_mahalanobis_strategy(self, monkeypatch):
+        monkeypatch.setenv("SAMPLING_STRATEGY", "high_mahalanobis")
+        ctrl = _make_ctrl([uuid4()])
+
+        with patch("sampling.main.SamplingDataController", return_value=ctrl):
+            main()
+
+        ctrl.select_and_mark_candidates.assert_called_once_with(limit=50, strategy="high_mahalanobis")
+
+    def test_uses_diverse_strategy(self, monkeypatch):
+        monkeypatch.setenv("SAMPLING_STRATEGY", "diverse")
+        ctrl = _make_ctrl([uuid4()])
+
+        with patch("sampling.main.SamplingDataController", return_value=ctrl):
+            main()
+
+        ctrl.select_and_mark_candidates.assert_called_once_with(limit=50, strategy="diverse")
 
     def test_no_error_when_no_unannotated_predictions(self, monkeypatch):
         """Empty result from the DB is a normal operating condition."""
@@ -58,7 +94,7 @@ class TestMainSelectsAndMarksCandidates:
         with patch("sampling.main.SamplingDataController", return_value=ctrl):
             main()  # result is logged, not returned — just verify no error
 
-        ctrl.select_and_mark_candidates.assert_called_once_with(limit=10)
+        ctrl.select_and_mark_candidates.assert_called_once_with(limit=10, strategy="random")
 
 
 class TestMainEnvValidation:
@@ -71,6 +107,13 @@ class TestMainEnvValidation:
 
     def test_exits_on_float_string(self, monkeypatch):
         monkeypatch.setenv("SAMPLING_CANDIDATES_PER_RUN", "3.5")
+
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert exc.value.code == 1
+
+    def test_exits_on_invalid_strategy(self, monkeypatch):
+        monkeypatch.setenv("SAMPLING_STRATEGY", "invalid_strategy")
 
         with pytest.raises(SystemExit) as exc:
             main()

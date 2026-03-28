@@ -90,6 +90,20 @@ class TestAnnotatedLabel:
         assert rec.annotated_label == 7
 
 
+class TestMahalanobisDistance:
+    def test_defaults_to_none(self):
+        rec = PredictRecord(**_valid_record())
+        assert rec.mahalanobis_distance is None
+
+    def test_float_value_accepted(self):
+        rec = PredictRecord(**_valid_record(mahalanobis_distance=42.5))
+        assert rec.mahalanobis_distance == 42.5
+
+    def test_zero_value_accepted(self):
+        rec = PredictRecord(**_valid_record(mahalanobis_distance=0.0))
+        assert rec.mahalanobis_distance == 0.0
+
+
 class TestModelCopy:
     def test_copy_is_independent(self):
         """model_copy() used by FakeDataController must produce an independent object."""

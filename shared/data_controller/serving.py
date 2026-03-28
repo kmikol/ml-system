@@ -58,6 +58,7 @@ class ServingDataController(_DataControllerBase):
                         record.confidence,
                         record.prediction_distribution,  # list[float] → psycopg2 → REAL[]
                         record.embedding,  # list[float] → psycopg2 → REAL[]
+                        record.mahalanobis_distance,
                         record.annotation_status,
                         record.annotated_label,
                     ),

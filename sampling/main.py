@@ -11,6 +11,8 @@ before the annotation job, which processes only 'candidate' rows.
 Environment variables:
   DATA_CONTROLLER_DB_URL       Required — PostgreSQL DSN.
   SAMPLING_CANDIDATES_PER_RUN  Max predictions to mark per execution (default: 50).
+  SAMPLING_STRATEGY            Sampling strategy to use (default: random).
+                               Options: random, low_confidence, high_mahalanobis, diverse
 """
 
 from __future__ import annotations
@@ -20,7 +22,7 @@ import os
 import sys
 
 from shared.data_controller._base import DataControllerError
-from shared.data_controller.sampling import SamplingDataController
+from shared.data_controller.sampling import SamplingDataController, SamplingStrategy
 from shared.logging_config import setup_logging
 
 setup_logging("sampling")
@@ -38,7 +40,23 @@ def main() -> None:
         )
         sys.exit(1)
 
-    logger.info("Sampling job starting. Candidates per run: %d", candidates_per_run)
+    # Get sampling strategy from environment variable
+    strategy_str = os.environ.get("SAMPLING_STRATEGY", "random")
+    valid_strategies: list[SamplingStrategy] = ["random", "low_confidence", "high_mahalanobis", "diverse"]
+    if strategy_str not in valid_strategies:
+        logger.critical(
+            "SAMPLING_STRATEGY must be one of %r, got: %r",
+            valid_strategies,
+            strategy_str,
+        )
+        sys.exit(1)
+    strategy: SamplingStrategy = strategy_str  # type: ignore
+
+    logger.info(
+        "Sampling job starting. Candidates per run: %d, Strategy: %s",
+        candidates_per_run,
+        strategy,
+    )
 
     try:
         ctrl = SamplingDataController()
@@ -47,7 +65,7 @@ def main() -> None:
         sys.exit(1)
 
     try:
-        marked = ctrl.select_and_mark_candidates(limit=candidates_per_run)
+        marked = ctrl.select_and_mark_candidates(limit=candidates_per_run, strategy=strategy)
     except DataControllerError as exc:
         logger.error("Failed to select candidates: %s", exc)
         sys.exit(1)
@@ -56,7 +74,7 @@ def main() -> None:
         logger.info("No unannotated predictions found. Nothing to mark.")
         return
 
-    logger.info("Marked %d prediction(s) as candidate.", len(marked))
+    logger.info("Marked %d prediction(s) as candidate using strategy '%s'.", len(marked), strategy)
 
 
 if __name__ == "__main__":

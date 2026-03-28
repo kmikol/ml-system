@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS predictions (
     confidence              REAL        NOT NULL,
     prediction_distribution REAL[]      NOT NULL,
     embedding               REAL[]      NOT NULL,
+    mahalanobis_distance    REAL,
     annotation_status       TEXT        NOT NULL DEFAULT 'none'
                             CHECK (annotation_status IN ('none', 'candidate', 'annotated')),
     annotated_label         INTEGER
@@ -73,15 +74,15 @@ CREATE INDEX IF NOT EXISTS idx_dataset_samples_version_split
 _INSERT = """
 INSERT INTO predictions (
     uuid, timestamp, model_version,
-    prediction, confidence, prediction_distribution, embedding,
+    prediction, confidence, prediction_distribution, embedding, mahalanobis_distance,
     annotation_status, annotated_label
-) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
 ON CONFLICT (uuid) DO NOTHING;
 """
 
 _SELECT_WINDOW = """
 SELECT uuid, timestamp, model_version,
-       prediction, confidence, prediction_distribution, embedding,
+       prediction, confidence, prediction_distribution, embedding, mahalanobis_distance,
        annotation_status, annotated_label
 FROM predictions
 WHERE timestamp >= %s
@@ -92,7 +93,7 @@ ORDER BY timestamp;
 
 _SELECT_LABELED = """
 SELECT uuid, timestamp, model_version,
-       prediction, confidence, prediction_distribution, embedding,
+       prediction, confidence, prediction_distribution, embedding, mahalanobis_distance,
        annotation_status, annotated_label
 FROM predictions
 WHERE annotated_label IS NOT NULL AND timestamp >= %s
@@ -117,6 +118,68 @@ UPDATE predictions
 SET annotation_status = 'candidate'
 FROM candidates
 WHERE predictions.uuid = candidates.uuid
+RETURNING predictions.uuid;
+"""
+
+# Smart sampling strategies
+_MARK_CANDIDATES_LOW_CONFIDENCE = """
+WITH candidates AS (
+    SELECT uuid
+    FROM predictions
+    WHERE annotation_status = 'none'
+    ORDER BY confidence ASC
+    LIMIT %s
+    FOR UPDATE SKIP LOCKED
+)
+UPDATE predictions
+SET annotation_status = 'candidate'
+FROM candidates
+WHERE predictions.uuid = candidates.uuid
+RETURNING predictions.uuid;
+"""
+
+_MARK_CANDIDATES_HIGH_MAHALANOBIS = """
+WITH candidates AS (
+    SELECT uuid
+    FROM predictions
+    WHERE annotation_status = 'none'
+      AND mahalanobis_distance IS NOT NULL
+    ORDER BY mahalanobis_distance DESC
+    LIMIT %s
+    FOR UPDATE SKIP LOCKED
+)
+UPDATE predictions
+SET annotation_status = 'candidate'
+FROM candidates
+WHERE predictions.uuid = candidates.uuid
+RETURNING predictions.uuid;
+"""
+
+_MARK_CANDIDATES_DIVERSE = """
+WITH ranked_candidates AS (
+    SELECT uuid, embedding, confidence, mahalanobis_distance
+    FROM predictions
+    WHERE annotation_status = 'none'
+      AND mahalanobis_distance IS NOT NULL
+    ORDER BY (1.0 - confidence) * 0.3 + mahalanobis_distance * 0.7 DESC
+    LIMIT %s * 5
+),
+selected AS (
+    SELECT DISTINCT ON (bucket) uuid
+    FROM (
+        SELECT
+            uuid,
+            NTILE(10) OVER (ORDER BY (1.0 - confidence) * 0.3 + mahalanobis_distance * 0.7 DESC) as bucket
+        FROM ranked_candidates
+    ) bucketed
+    ORDER BY bucket, RANDOM()
+    LIMIT %s
+    FOR UPDATE SKIP LOCKED
+)
+UPDATE predictions
+SET annotation_status = 'candidate'
+FROM selected
+WHERE predictions.uuid = selected.uuid
 RETURNING predictions.uuid;
 """
 
@@ -157,6 +220,7 @@ def _row_to_record(row: tuple) -> PredictRecord:
         confidence,
         prediction_distribution,
         embedding,
+        mahalanobis_distance,
         annotation_status,
         annotated_label,
     ) = row
@@ -169,6 +233,7 @@ def _row_to_record(row: tuple) -> PredictRecord:
         prediction=prediction,
         confidence=confidence,
         prediction_distribution=list(prediction_distribution),
+        mahalanobis_distance=mahalanobis_distance,
         annotation_status=annotation_status,
         annotated_label=annotated_label,
     )

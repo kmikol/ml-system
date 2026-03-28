@@ -222,12 +222,16 @@ async def predict(request: PredictRequest):
     _confidence_histogram.labels(class_label=str(result["prediction"])).observe(
         result["confidence"]
     )
+
+    # Compute Mahalanobis distance
+    mahalanobis_distance = None
     gaussians = model_manager.class_gaussians
     if gaussians is not None:
         try:
             g = gaussians[str(result["prediction"])]
             delta = np.array(result["embedding"]) - g["mean"]
             score = float(delta @ g["precision"] @ delta)
+            mahalanobis_distance = score
             _mahalanobis_histogram.labels(class_label=str(result["prediction"])).observe(score)
         except Exception as e:
             logger.warning(f"Mahalanobis scoring failed: {e}")
@@ -240,6 +244,7 @@ async def predict(request: PredictRequest):
         prediction=result["prediction"],
         confidence=result["confidence"],
         prediction_distribution=result["prediction_distribution"],
+        mahalanobis_distance=mahalanobis_distance,
     )
     data_controller.store_prediction(record)
 

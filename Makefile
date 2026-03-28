@@ -452,15 +452,6 @@ data.inspect.training: ## Plot 4x4 grid of random training images with labels
 	$(_DATA_ENV) PYTHONPATH=. python scripts/inspect_dataset.py --split train
 
 # ═══════════════════════════════════════════════════════════════
-# TRAINING
-# ═══════════════════════════════════════════════════════════════
-
-.PHONY: train.local
-
-train.local: ## Train MNIST model locally against k3d Postgres, MinIO, and MLflow
-	$(_DATA_ENV) MLFLOW_TRACKING_URI=http://localhost:5000 PYTHONPATH=. python -m training.main
-
-# ═══════════════════════════════════════════════════════════════
 # TESTING + DEBUG
 # ═══════════════════════════════════════════════════════════════
 
@@ -468,6 +459,20 @@ train.local: ## Train MNIST model locally against k3d Postgres, MinIO, and MLflo
         test.data_controller.unit test.data_controller.integration \
         test.model_artifact_controller.unit test.model_artifact_controller.integration \
         lint lint.fix format serve.test serve.test.load serve.test.drift mlflow.ui minio.ui clean.pyc
+
+typecheck: ## Run mypy static type checker
+	python -m mypy serving annotation sampling monitoring/ml_exporter shared \
+		--ignore-missing-imports --no-strict-optional
+
+lint: ## Check code with ruff (no changes)
+	ruff check .
+
+lint.fix: ## Auto-fix ruff lint issues and format code
+	ruff check --fix .
+	ruff format .
+
+format: ## Format code with ruff
+	ruff format .
 
 test: ## Run all tests (unit + integration) in Docker
 	$(TEST_COMPOSE) run --rm test; \
@@ -484,10 +489,6 @@ test.coverage: ## Run unit tests with line-level coverage report (no Docker need
 		--cov-report=term-missing \
 		--cov-omit='*/tests/*,*/__pycache__/*' \
 		-v
-
-typecheck: ## Run mypy static type checker
-	python -m mypy serving annotation sampling monitoring/ml_exporter shared \
-		--ignore-missing-imports --no-strict-optional
 
 test.integration: ## Run integration tests in Docker
 	$(TEST_COMPOSE) run --rm test pytest \
@@ -516,15 +517,6 @@ test.model_artifact_controller.integration: ## Run model_artifact_controller int
 	$(TEST_COMPOSE) down -v; \
 	exit $$EXIT
 
-lint: ## Check code with ruff (no changes)
-	ruff check .
-
-lint.fix: ## Auto-fix ruff lint issues and format code
-	ruff check --fix .
-	ruff format .
-
-format: ## Format code with ruff
-	ruff format .
 
 serve.test: ## Smoke test against running serving (works with compose or k3d)
 	@echo "$(CYAN)Health:$(RESET)"

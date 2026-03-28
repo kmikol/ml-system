@@ -15,6 +15,7 @@ docs
 data
 !data/remaining/uuids.npy
 !data/remaining/labels.npy
+!data/v0/**
 *.log
 *.tmp
 .idea

@@ -15,11 +15,19 @@ data:
             alertname: PsiThresholdBreached
           receiver: 'argo-events-webhook'
           repeat_interval: 1m
+        - match:
+            alertname: AnnotationCountReached
+          receiver: 'annotation-ready-webhook'
+          repeat_interval: 1m
     receivers:
       - name: 'default'
       - name: 'argo-events-webhook'
         webhook_configs:
           - url: 'http://psi-alert-eventsource-svc.{{ .Values.global.namespace }}.svc.cluster.local:12000/psi-alert'
+            send_resolved: false
+      - name: 'annotation-ready-webhook'
+        webhook_configs:
+          - url: 'http://annotation-ready-eventsource-svc.{{ .Values.global.namespace }}.svc.cluster.local:12001/annotation-ready'
             send_resolved: false
 ---
 apiVersion: apps/v1

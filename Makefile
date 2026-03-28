@@ -172,22 +172,25 @@ k3d.bootstrap: ## First-time setup: create cluster, install KEDA+Argo, build+imp
 	@echo "$(CYAN)[3/9] Installing Argo Workflows + Argo Events...$(RESET)"
 	@$(MAKE) --no-print-directory k3d.argo.install
 	@echo ""
-	@echo "$(CYAN)[4/9] Building Docker images...$(RESET)"
+	@echo "$(CYAN)[4/9] Preparing dataset (download + partition + assign UUIDs)...$(RESET)"
+	@$(MAKE) --no-print-directory data.prepare
+	@echo ""
+	@echo "$(CYAN)[5/9] Building Docker images (oracle files baked in after prepare)...$(RESET)"
 	@$(MAKE) --no-print-directory k3d.build
 	@echo ""
-	@echo "$(CYAN)[5/9] Importing images into k3d...$(RESET)"
+	@echo "$(CYAN)[6/9] Importing images into k3d...$(RESET)"
 	@$(MAKE) --no-print-directory k3d.import
 	@echo ""
-	@echo "$(CYAN)[6/9] Deploying services with Helm...$(RESET)"
+	@echo "$(CYAN)[7/9] Deploying services with Helm...$(RESET)"
 	@$(MAKE) --no-print-directory k3d.deploy
 	@echo ""
-	@echo "$(CYAN)[7/9] Setting up dataset (prepare → seed → verify)...$(RESET)"
-	@$(MAKE) --no-print-directory data.setup
+	@echo "$(CYAN)[8/9] Seeding dataset into Postgres + MinIO...$(RESET)"
+	@$(MAKE) --no-print-directory data.seed
 	@echo ""
-	@echo "$(CYAN)[8/9] Training model...$(RESET)"
+	@echo "$(CYAN)[9/9] Training model...$(RESET)"
 	@$(MAKE) --no-print-directory k3d.train
 	@echo ""
-	@echo "$(CYAN)[9/9] Restarting serving to load the trained model...$(RESET)"
+	@echo "$(CYAN)[10/10] Restarting serving to load the trained model...$(RESET)"
 	@$(MAKE) --no-print-directory x
 	@echo ""
 	@echo "$(GREEN)╔══════════════════════════════════════════════════════╗$(RESET)"
@@ -311,10 +314,10 @@ k3d.redeploy: k3d.build k3d.import k3d.deploy ## Rebuild, import, and redeploy (
 	@# Force rolling restart of deployments that use custom images.
 	@# Required because imagePullPolicy:Never + latest tag means k8s won't
 	@# detect that the image content changed after k3d image import.
-	kubectl rollout restart deployment/fastapi-serving deployment/mlflow deployment/grafana deployment/alloy -n $(K8S_NAMESPACE)
+	kubectl rollout restart deployment/fastapi-serving deployment/mlflow deployment/grafana deployment/alloy deployment/prometheus deployment/alertmanager -n $(K8S_NAMESPACE)
 	@kubectl get deployment ml-exporter -n $(K8S_NAMESPACE) &>/dev/null && \
 		kubectl rollout restart deployment/ml-exporter -n $(K8S_NAMESPACE) || true
-	kubectl rollout status deployment/fastapi-serving deployment/mlflow deployment/grafana deployment/alloy -n $(K8S_NAMESPACE) --timeout=120s
+	kubectl rollout status deployment/fastapi-serving deployment/mlflow deployment/grafana deployment/alloy deployment/prometheus deployment/alertmanager -n $(K8S_NAMESPACE) --timeout=120s
 	@echo "$(GREEN)Redeploy complete.$(RESET)"
 
 k3d.ml-exporter.restart: ## Restart ml-exporter pod

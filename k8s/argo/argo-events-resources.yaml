@@ -101,4 +101,68 @@ subjects:
   - kind: ServiceAccount
     name: default
     namespace: argo
+---
+# EventSource: receives the AlertManager webhook POST when annotation_annotated_count >= 50.
+apiVersion: argoproj.io/v1alpha1
+kind: EventSource
+metadata:
+  name: annotation-ready
+  namespace: ml-system
+spec:
+  webhook:
+    annotation-ready:
+      port: "12001"
+      endpoint: /annotation-ready
+      method: POST
+---
+# Service for the annotation-ready EventSource webhook pod.
+apiVersion: v1
+kind: Service
+metadata:
+  name: annotation-ready-eventsource-svc
+  namespace: ml-system
+spec:
+  selector:
+    eventsource-name: annotation-ready
+  ports:
+    - port: 12001
+      targetPort: 12001
+---
+# Sensor: fires when BOTH PSI alert AND annotation count alert have fired.
+# The conditions field implements AND logic — the trigger only executes when
+# both dependencies have received an event since the last reset.
+apiVersion: argoproj.io/v1alpha1
+kind: Sensor
+metadata:
+  name: retrain-sensor
+  namespace: ml-system
+spec:
+  template:
+    serviceAccountName: argo-events-sa
+  dependencies:
+    - name: psi-alert-dep
+      eventSourceName: psi-alert
+      eventName: psi-alert
+    - name: annotation-ready-dep
+      eventSourceName: annotation-ready
+      eventName: annotation-ready
+  triggers:
+    - template:
+        name: trigger-retrain
+        conditions: "psi-alert-dep && annotation-ready-dep"
+        argoWorkflow:
+          group: argoproj.io
+          version: v1alpha1
+          resource: workflows
+          operation: submit
+          source:
+            resource:
+              apiVersion: argoproj.io/v1alpha1
+              kind: Workflow
+              metadata:
+                generateName: retrain-
+                namespace: argo
+              spec:
+                workflowTemplateRef:
+                  name: retrain
 # WorkflowTemplates are defined in k8s/argo/workflows/ and applied separately.

@@ -45,7 +45,7 @@ def main():
     fig, axes = plt.subplots(4, 4, figsize=(6, 6))
     fig.suptitle(f"MNIST 14×14 — split: {args.split}", fontsize=12)
 
-    for ax, idx in zip(axes.flat, chosen):
+    for ax, idx in zip(axes.flat, chosen, strict=False):
         s = samples[idx]
         img = np.array(s["image"], dtype=np.float32)
         ax.imshow(img, cmap="gray", vmin=0, vmax=1)

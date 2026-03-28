@@ -179,7 +179,7 @@ async def lifespan(app: FastAPI):
         if model_manager.load_from_mlflow():
             break
         logger.warning(f"Model load attempt {attempt + 1}/5 failed, retrying in 5s...")
-        time.sleep(5)
+        await asyncio.sleep(5)
     else:
         logger.error("Failed to load model after 5 attempts.")
 

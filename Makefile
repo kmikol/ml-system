@@ -163,35 +163,38 @@ k3d.bootstrap: ## First-time setup: create cluster, install KEDA+Argo, build+imp
 	@echo "$(CYAN)║  k3d bootstrap - full first-time startup             ║$(RESET)"
 	@echo "$(CYAN)╚══════════════════════════════════════════════════════╝$(RESET)"
 	@echo ""
-	@echo "$(CYAN)[1/9] Creating k3d cluster...$(RESET)"
+	@echo "$(CYAN)[1/11] Creating k3d cluster...$(RESET)"
 	@$(MAKE) --no-print-directory k3d.create
 	@echo ""
-	@echo "$(CYAN)[2/9] Installing KEDA...$(RESET)"
+	@echo "$(CYAN)[2/11] Installing KEDA...$(RESET)"
 	@$(MAKE) --no-print-directory k3d.keda.install
 	@echo ""
-	@echo "$(CYAN)[3/9] Installing Argo Workflows + Argo Events...$(RESET)"
+	@echo "$(CYAN)[3/11] Installing Argo Workflows + Argo Events...$(RESET)"
 	@$(MAKE) --no-print-directory k3d.argo.install
 	@echo ""
-	@echo "$(CYAN)[4/9] Preparing dataset (download + partition + assign UUIDs)...$(RESET)"
+	@echo "$(CYAN)[4/11] Preparing dataset (download + partition + assign UUIDs)...$(RESET)"
 	@$(MAKE) --no-print-directory data.prepare
 	@echo ""
-	@echo "$(CYAN)[5/9] Building Docker images (oracle files baked in after prepare)...$(RESET)"
+	@echo "$(CYAN)[5/11] Building Docker images (oracle files baked in after prepare)...$(RESET)"
 	@$(MAKE) --no-print-directory k3d.build
 	@echo ""
-	@echo "$(CYAN)[6/9] Importing images into k3d...$(RESET)"
+	@echo "$(CYAN)[6/11] Importing images into k3d...$(RESET)"
 	@$(MAKE) --no-print-directory k3d.import
 	@echo ""
-	@echo "$(CYAN)[7/9] Deploying services with Helm...$(RESET)"
+	@echo "$(CYAN)[7/11] Deploying services with Helm...$(RESET)"
 	@$(MAKE) --no-print-directory k3d.deploy
 	@echo ""
-	@echo "$(CYAN)[8/9] Seeding dataset into Postgres + MinIO...$(RESET)"
+	@echo "$(CYAN)[8/11] Seeding dataset into Postgres + MinIO...$(RESET)"
 	@$(MAKE) --no-print-directory data.seed
 	@echo ""
-	@echo "$(CYAN)[9/9] Training model...$(RESET)"
+	@echo "$(CYAN)[9/11] Verifying dataset integrity...$(RESET)"
+	@$(MAKE) --no-print-directory data.verify
+	@echo ""
+	@echo "$(CYAN)[10/11] Training model...$(RESET)"
 	@$(MAKE) --no-print-directory k3d.train
 	@echo ""
-	@echo "$(CYAN)[10/10] Restarting serving to load the trained model...$(RESET)"
-	@$(MAKE) --no-print-directory x
+	@echo "$(CYAN)[11/11] Restarting serving to load the trained model...$(RESET)"
+	@$(MAKE) --no-print-directory k3d.serve.restart
 	@echo ""
 	@echo "$(GREEN)╔══════════════════════════════════════════════════════╗$(RESET)"
 	@echo "$(GREEN)║  Bootstrap complete!                                 ║$(RESET)"
@@ -434,7 +437,7 @@ _DATA_ENV  := DATA_CONTROLLER_DB_URL=$(_LOCAL_DB) DATASET_S3_ENDPOINT_URL=$(_LOC
 
 .PHONY: data.prepare data.seed data.verify data.setup data.inspect.training
 
-data.prepare: ## Download MNIST, resize 14x14, partition 10%/90% into data/
+data.prepare: ## Download MNIST, resize 14x14, partition 1%/99% into data/
 	PYTHONPATH=. python scripts/prepare_mnist.py
 
 data.seed: ## Seed v0 dataset into k3d Postgres + MinIO (requires k3d running)
@@ -474,6 +477,17 @@ test: ## Run all tests (unit + integration) in Docker
 
 test.unit: ## Run unit tests locally (no Docker needed)
 	PYTHONPATH=. python -m pytest tests/unit/ shared/data_controller/tests/unit/ shared/model_artifact_controller/tests/unit/ -v
+
+test.coverage: ## Run unit tests with line-level coverage report (no Docker needed)
+	PYTHONPATH=. python -m pytest tests/unit/ shared/data_controller/tests/unit/ shared/model_artifact_controller/tests/unit/ \
+		--cov=serving --cov=annotation --cov=sampling --cov=monitoring --cov=shared \
+		--cov-report=term-missing \
+		--cov-omit='*/tests/*,*/__pycache__/*' \
+		-v
+
+typecheck: ## Run mypy static type checker
+	python -m mypy serving annotation sampling monitoring/ml_exporter shared \
+		--ignore-missing-imports --no-strict-optional
 
 test.integration: ## Run integration tests in Docker
 	$(TEST_COMPOSE) run --rm test pytest \

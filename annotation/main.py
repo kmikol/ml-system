@@ -49,7 +49,7 @@ def _load_oracle(oracle_path: str) -> dict[str, int]:
     except FileNotFoundError as exc:
         logger.critical("Oracle file not found: %s", exc)
         sys.exit(1)
-    oracle = {str(u): int(lbl) for u, lbl in zip(uuids, labels)}
+    oracle = {str(u): int(lbl) for u, lbl in zip(uuids, labels, strict=True)}
     logger.info(
         "Loaded annotation oracle: %d entries from %s", len(oracle), oracle_path
     )
@@ -96,8 +96,12 @@ def main() -> None:
         label = oracle.get(str(uuid))
         if label is None:
             logger.warning(
-                "UUID %s not found in annotation oracle — skipping.", uuid
+                "UUID %s not found in annotation oracle — resetting to 'none'.", uuid
             )
+            try:
+                ctrl.reset_candidate(uuid)
+            except DataControllerError as exc:
+                logger.error("Failed to reset candidate %s: %s", uuid, exc)
             skipped += 1
             continue
         try:

@@ -45,7 +45,7 @@ def main():
     train = None
     for split in ["train", "val", "test"]:
         samples = ctrl.get_dataset_split(version_id, split)
-        labels = sorted(set(s["label"] for s in samples))
+        labels = sorted({s["label"] for s in samples})
         print(f"  {split}: {len(samples)} samples, labels={labels}")
         if not samples:
             print(f"  ERROR: no samples in split '{split}' for version '{version_id}'")
@@ -53,7 +53,7 @@ def main():
         if split == "train":
             train = samples
 
-    if len(set(s["label"] for s in train)) < 10:
+    if len({s["label"] for s in train}) < 10:
         print("  WARNING: training split has fewer than 10 distinct labels")
 
     print("Spot-checking MinIO image download...")

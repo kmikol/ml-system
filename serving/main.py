@@ -9,9 +9,9 @@ import logging
 import tempfile
 import threading
 import time
-import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from uuid import uuid4
 
 import numpy as np
 import onnxruntime as ort
@@ -215,7 +215,6 @@ async def predict(request: PredictRequest):
 
     features_array = np.array([np.array(request.image).flatten()], dtype=np.float32)
     result = model_manager.predict(features_array)
-    request_id = request.request_id or str(uuid.uuid4())
     _prediction_class_counter.labels(class_label=str(result["prediction"])).inc()
     _confidence_histogram.labels(class_label=str(result["prediction"])).observe(result["confidence"])
     gaussians = model_manager.class_gaussians
@@ -228,27 +227,23 @@ async def predict(request: PredictRequest):
         except Exception as e:
             logger.warning(f"Mahalanobis scoring failed: {e}")
 
-    response = PredictResponse(
+    record = PredictRecord(
+        uuid=request.uuid if request.uuid is not None else uuid4(),
+        timestamp=datetime.now(UTC),
+        model_version=model_manager.model_version,
+        embedding=result["embedding"],
+        prediction=result["prediction"],
+        confidence=result["confidence"],
+        prediction_distribution=result["prediction_distribution"],
+    )
+    data_controller.store_prediction(record)
+
+    return PredictResponse(
         prediction=result["prediction"],
         confidence=result["confidence"],
         model_version=model_manager.model_version,
-        request_id=request_id,
+        uuid=record.uuid,
     )
-
-    data_controller.store_prediction(
-        PredictRecord(
-            prediction_id=request_id,
-            timestamp=datetime.now(UTC),
-            model_version=model_manager.model_version,
-            image=request.image,
-            embedding=result["embedding"],
-            prediction=result["prediction"],
-            confidence=result["confidence"],
-            prediction_distribution=result["prediction_distribution"],
-        )
-    )
-
-    return response
 
 
 @app.get("/health", response_model=HealthResponse)

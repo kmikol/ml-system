@@ -3,17 +3,17 @@
 
 from __future__ import annotations
 
+from uuid import UUID
+
 from shared.config import require_env
 from shared.data_controller._base import _WRITE_LABEL, DataControllerError, _DataControllerBase
 
-# Randomly sample up to *limit* candidate predictions that have a matching entry
-# in dataset_samples (joined on the UUID that propagates from dataset → serving →
-# predictions table).  ORDER BY RANDOM() gives a uniform sample each run.
+# Return the UUIDs of candidate predictions, randomly ordered so each job run
+# annotates a different subset.  Labels are resolved by the annotation job from
+# the file-based oracle (uuids.npy + labels.npy), not from the database.
 _GET_CANDIDATES = """
-SELECT p.prediction_id, d.label
-FROM predictions p
-JOIN dataset_samples d ON d.sample_id = p.prediction_id
-WHERE p.annotation_status = 'candidate'
+SELECT uuid FROM predictions
+WHERE annotation_status = 'candidate'
 ORDER BY RANDOM()
 LIMIT %s;
 """
@@ -25,34 +25,33 @@ class AnnotationDataController(_DataControllerBase):
     def __init__(self) -> None:
         super().__init__(require_env("DATA_CONTROLLER_DB_URL"))
 
-    def get_candidates(self, limit: int) -> list[tuple[str, int]]:
-        """Return up to *limit* candidate predictions with their ground truth labels.
+    def get_candidates(self, limit: int) -> list[UUID]:
+        """Return up to *limit* candidate prediction UUIDs.
 
-        Joins the predictions table (annotation_status='candidate') with
-        dataset_samples on the UUID to retrieve the ground truth label for each
-        candidate.  Results are randomly ordered so each job run annotates a
-        different subset.
+        Results are randomly ordered so each job run annotates a different
+        subset.  The caller is responsible for resolving labels via the
+        file-based oracle.
 
         Args:
             limit: Maximum number of candidates to return.
 
         Returns:
-            List of ``(prediction_id, ground_truth_label)`` tuples.
+            List of prediction UUIDs with ``annotation_status='candidate'``.
         """
         try:
             conn = self._connect()
             with conn.cursor() as cur:
                 cur.execute(_GET_CANDIDATES, (limit,))
-                return [(row[0], row[1]) for row in cur.fetchall()]
+                return [row[0] for row in cur.fetchall()]
         except Exception as exc:
             raise DataControllerError(f"Failed to fetch candidates: {exc}") from exc
 
-    def write_label(self, prediction_id: str, label: int) -> None:
+    def write_label(self, uuid: UUID, label: int) -> None:
         """Write a ground truth label and advance annotation_status to 'annotated'."""
         try:
             conn = self._connect()
             with conn.cursor() as cur:
-                cur.execute(_WRITE_LABEL, (label, prediction_id))
+                cur.execute(_WRITE_LABEL, (label, uuid))
             conn.commit()
         except Exception as exc:
             try:
@@ -60,5 +59,5 @@ class AnnotationDataController(_DataControllerBase):
             except Exception:
                 self._conn = None
             raise DataControllerError(
-                f"Failed to write label for '{prediction_id}': {exc}"
+                f"Failed to write label for '{uuid}': {exc}"
             ) from exc

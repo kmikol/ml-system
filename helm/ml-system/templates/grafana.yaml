@@ -9,6 +9,7 @@ data:
     apiVersion: 1
     datasources:
       - name: Prometheus
+        uid: prometheus
         type: prometheus
         access: proxy
         url: http://prometheus:{{ .Values.prometheus.port }}
@@ -17,6 +18,7 @@ data:
     apiVersion: 1
     datasources:
       - name: Loki
+        uid: loki
         type: loki
         access: proxy
         url: http://loki:{{ .Values.loki.port }}

@@ -1,0 +1,23 @@
+# k8s/argo/workflows/retrain.yaml
+#
+# WorkflowTemplate: model retraining pipeline.
+#
+# Triggered by the retrain-sensor when BOTH alerts fire simultaneously:
+#   - PsiThresholdBreached  (PSI class distribution > 0.25)
+#   - AnnotationCountReached (>= 50 annotated samples not yet in training)
+#
+# Currently a placeholder — the real training logic will be implemented later.
+# The dummy step just prints a message and exits successfully.
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: retrain
+  namespace: argo
+spec:
+  entrypoint: retrain
+  templates:
+    - name: retrain
+      container:
+        image: python:3.11-slim
+        imagePullPolicy: IfNotPresent
+        command: [python, -c, "print('Retraining triggered — placeholder implementation')"]

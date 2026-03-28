@@ -55,6 +55,11 @@ prometheus:
   scrapeIntervalSeconds: 15
   evaluationIntervalSeconds: 15
 
+alertmanager:
+  enabled: true
+  image: prom/alertmanager:v0.26.0
+  port: 9093
+
 grafana:
   enabled: true
   image: grafana/grafana:10.3.0
@@ -106,9 +111,9 @@ secrets:
   minioSecretKey: minioadmin
   postgresPassword: mlflow
 
-driftDetection:
+mlExporter:
   enabled: false
-  image: ml-system-drift:latest
+  image: ml-system-ml-exporter:latest
   port: 8001
   env:
     DATA_CONTROLLER_DB_URL: "postgresql://mlflow:mlflow@postgres:5432/mlflow"

@@ -1,65 +1,48 @@
 # shared/data_controller/sampling.py
-"""SamplingDataController — query and annotate predictions for sample selection."""
+"""SamplingDataController — atomic candidate selection for the annotation pipeline."""
 
 from __future__ import annotations
 
-from datetime import datetime
+from uuid import UUID
 
 from shared.config import require_env
 from shared.data_controller._base import (
-    _COUNT_LABELS,
-    _MARK_CANDIDATE,
-    _SELECT_WINDOW,
+    _MARK_CANDIDATES_BATCH,
     DataControllerError,
     _DataControllerBase,
-    _row_to_record,
 )
-from shared.schemas.predict_record import PredictRecord
 
 
 class SamplingDataController(_DataControllerBase):
-    """Used by the sample selection service."""
+    """Used by the sampling job to atomically select and mark annotation candidates.
+
+    Any prediction with ``annotation_status='none'`` is eligible.  Selection is
+    random so repeated runs sample different subsets.  The annotation job resolves
+    labels for each candidate UUID from the file-based oracle.
+    """
 
     def __init__(self) -> None:
         super().__init__(require_env("DATA_CONTROLLER_DB_URL"))
 
-    def get_predictions(
-        self,
-        since: datetime,
-        until: datetime | None = None,
-        model_version: str | None = None,
-    ) -> list[PredictRecord]:
-        """Return predictions in [since, until) for uncertainty/diversity scoring."""
-        try:
-            conn = self._connect()
-            with conn.cursor() as cur:
-                cur.execute(_SELECT_WINDOW, (since, until, until, model_version, model_version))
-                return [_row_to_record(row) for row in cur.fetchall()]
-        except Exception as exc:
-            raise DataControllerError(f"Failed to query predictions: {exc}") from exc
+    def select_and_mark_candidates(self, limit: int) -> list[UUID]:
+        """Atomically select up to *limit* unannotated predictions and advance
+        their ``annotation_status`` to ``'candidate'``.
 
-    def mark_candidate(self, prediction_id: str) -> None:
-        """Advance annotation_status from 'none' to 'candidate'."""
+        Selection is random so repeated runs sample different subsets.
+
+        Returns:
+            List of prediction UUIDs that were marked as candidate.
+        """
         try:
             conn = self._connect()
             with conn.cursor() as cur:
-                cur.execute(_MARK_CANDIDATE, (prediction_id,))
+                cur.execute(_MARK_CANDIDATES_BATCH, (limit,))
+                marked = [row[0] for row in cur.fetchall()]
             conn.commit()
+            return marked
         except Exception as exc:
             try:
                 self._conn.rollback()
             except Exception:
                 self._conn = None
-            raise DataControllerError(
-                f"Failed to mark '{prediction_id}' as candidate: {exc}"
-            ) from exc
-
-    def count_labels_since(self, since: datetime) -> int:
-        """Return the number of labeled predictions since *since*."""
-        try:
-            conn = self._connect()
-            with conn.cursor() as cur:
-                cur.execute(_COUNT_LABELS, (since,))
-                return cur.fetchone()[0]
-        except Exception as exc:
-            raise DataControllerError(f"Failed to count labels: {exc}") from exc
+            raise DataControllerError(f"Failed to mark candidates: {exc}") from exc

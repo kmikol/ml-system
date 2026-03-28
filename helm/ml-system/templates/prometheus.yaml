@@ -16,6 +16,12 @@ data:
     rule_files:
       - /etc/prometheus/alerts.yml
 
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets:
+                - alertmanager.{{ .Values.global.namespace }}.svc.cluster.local:9093
+
   alerts.yml: |
     groups:
       - name: ml_serving
@@ -27,6 +33,21 @@ data:
               severity: critical
             annotations:
               summary: "p99 latency exceeds 1 second"
+          - alert: PsiThresholdBreached
+            expr: drift_psi_class_distribution > 0.25
+            for: 30s
+            labels:
+              severity: warning
+            annotations:
+              summary: "PSI class distribution exceeds 0.25 — drift detected"
+              description: "drift_psi_class_distribution={{ "{{" }} $value {{ "}}" }}"
+          - alert: AnnotationCountReached
+            expr: annotation_annotated_count >= 50
+            for: 0m
+            labels:
+              severity: warning
+            annotations:
+              summary: "50+ annotated samples available for retraining"
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -48,6 +69,8 @@ metadata:
     app: prometheus
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: prometheus

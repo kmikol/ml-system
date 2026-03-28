@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 
@@ -54,16 +53,15 @@ class ServingDataController(_DataControllerBase):
             conn = self._connect()
             with conn.cursor() as cur:
                 cur.execute(_INSERT, (
-                    record.prediction_id,
+                    record.uuid,
                     record.timestamp,
                     record.model_version,
-                    json.dumps(record.image),
-                    json.dumps(record.embedding),
                     record.prediction,
                     record.confidence,
-                    json.dumps(record.prediction_distribution),
-                    record.label,
+                    record.prediction_distribution,  # list[float] → psycopg2 → REAL[]
+                    record.embedding,                # list[float] → psycopg2 → REAL[]
                     record.annotation_status,
+                    record.annotated_label,
                 ))
             conn.commit()
         except Exception as exc:

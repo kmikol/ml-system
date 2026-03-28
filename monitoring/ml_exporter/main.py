@@ -1,10 +1,10 @@
-# monitoring/drift/main.py
+# monitoring/ml_exporter/main.py
 """
-Drift detection service. Polls the predictions DB on a fixed interval,
-computes PSI over the prediction class distribution vs. the MLflow reference
-baseline, and exposes results as Prometheus Gauges.
+ML metrics exporter. Polls the predictions DB on a fixed interval and exposes
+domain metrics as Prometheus Gauges: drift (PSI), class distribution, confidence,
+and annotation pipeline state.
 
-Usage: uvicorn monitoring.drift.main:app --host 0.0.0.0 --port 8001
+Usage: uvicorn monitoring.ml_exporter.main:app --host 0.0.0.0 --port 8001
 """
 
 import logging
@@ -57,6 +57,10 @@ _psi = Gauge(
 _poll_age = Gauge(
     "drift_last_poll_age_seconds", "Seconds since last successful poll"
 )
+_annotated_count = Gauge(
+    "annotation_annotated_count",
+    "Total predictions with annotation_status='annotated' not yet in any dataset",
+)
 
 
 # ── Shared state (read/written by poll thread, read by health endpoint) ──
@@ -64,7 +68,7 @@ _lock = threading.Lock()
 _current_run_id: str | None = None
 _ref_class_freq: list[float] | None = None  # 10-element list from reference_distribution.json
 _last_poll_ts: float = 0.0
-_artifact_dir = tempfile.mkdtemp(prefix="ml_drift_")
+_artifact_dir = tempfile.mkdtemp(prefix="ml_exporter_")
 
 _data_controller = DriftDataController()
 _artifact_controller = ModelArtifactController()
@@ -167,6 +171,14 @@ def _poll() -> None:
             f"dist={[round(f, 3) for f in actual_freq]}"
         )
 
+    # Annotation pipeline state.
+    try:
+        count = _data_controller.get_annotated_count()
+        _annotated_count.set(count)
+        logger.info(f"Annotated count (not in training set): {count}")
+    except Exception as e:
+        logger.warning(f"Annotated count poll failed: {e}", exc_info=True)
+
     with _lock:
         _last_poll_ts = time.time()
 
@@ -196,14 +208,14 @@ async def lifespan(app: FastAPI):
     threading.Thread(target=_poll_loop, daemon=True).start()
     threading.Thread(target=_age_updater, daemon=True).start()
     logger.info(
-        f"Drift service started — poll_interval={DRIFT_POLL_INTERVAL}s "
+        f"ML exporter started — poll_interval={DRIFT_POLL_INTERVAL}s "
         f"window={DRIFT_WINDOW_SECONDS}s model={MODEL_NAME}/{MODEL_STAGE}"
     )
     yield
-    logger.info("Drift service shutting down.")
+    logger.info("ML exporter shutting down.")
 
 
-app = FastAPI(title="Drift Detection", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="ML Exporter", version="1.0.0", lifespan=lifespan)
 
 # Mount prometheus_client's ASGI app at /metrics (no fastapi-instrumentator needed).
 app.mount("/metrics", make_asgi_app())

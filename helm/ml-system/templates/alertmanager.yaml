@@ -1,0 +1,79 @@
+{{- if .Values.alertmanager.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alertmanager-config
+  namespace: {{ .Values.global.namespace }}
+data:
+  alertmanager.yml: |
+    global:
+      resolve_timeout: 5m
+    route:
+      receiver: 'default'
+      routes:
+        - match:
+            alertname: PsiThresholdBreached
+          receiver: 'argo-events-webhook'
+          repeat_interval: 1m
+        - match:
+            alertname: AnnotationCountReached
+          receiver: 'annotation-ready-webhook'
+          repeat_interval: 1m
+    receivers:
+      - name: 'default'
+      - name: 'argo-events-webhook'
+        webhook_configs:
+          - url: 'http://psi-alert-eventsource-svc.{{ .Values.global.namespace }}.svc.cluster.local:12000/psi-alert'
+            send_resolved: false
+      - name: 'annotation-ready-webhook'
+        webhook_configs:
+          - url: 'http://annotation-ready-eventsource-svc.{{ .Values.global.namespace }}.svc.cluster.local:12001/annotation-ready'
+            send_resolved: false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alertmanager
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: alertmanager
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alertmanager
+  template:
+    metadata:
+      labels:
+        app: alertmanager
+    spec:
+      containers:
+        - name: alertmanager
+          image: {{ .Values.alertmanager.image }}
+          imagePullPolicy: IfNotPresent
+          args:
+            - --config.file=/etc/alertmanager/alertmanager.yml
+            - --storage.path=/alertmanager
+          ports:
+            - containerPort: {{ .Values.alertmanager.port }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/alertmanager
+      volumes:
+        - name: config
+          configMap:
+            name: alertmanager-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alertmanager
+  namespace: {{ .Values.global.namespace }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.alertmanager.port }}
+      targetPort: {{ .Values.alertmanager.port }}
+  selector:
+    app: alertmanager
+{{- end }}

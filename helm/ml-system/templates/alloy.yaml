@@ -76,15 +76,24 @@ data:
       forward_to      = [prometheus.remote_write.local.receiver]
     }
 
-    {{- if .Values.driftDetection.enabled }}
-    // Drift detection service exposes Gauges (single pod, no per-replica concern).
-    prometheus.scrape "drift" {
-      targets         = [{"__address__" = "drift.{{ .Values.global.namespace }}.svc.cluster.local:{{ .Values.driftDetection.port }}"}]
+    {{- if .Values.mlExporter.enabled }}
+    // ML exporter — drift, class distribution, confidence, and annotation pipeline metrics.
+    prometheus.scrape "ml_exporter" {
+      targets         = [{"__address__" = "ml-exporter.{{ .Values.global.namespace }}.svc.cluster.local:{{ .Values.mlExporter.port }}"}]
       scrape_interval = "{{ .Values.alloy.scrapeIntervalSeconds }}s"
       metrics_path    = "/metrics"
       forward_to      = [prometheus.remote_write.local.receiver]
     }
     {{- end }}
+
+    // Argo Workflows controller metrics — exposes argo_workflows_count and related gauges.
+    // Static address: no k8s discovery needed, no additional RBAC required.
+    prometheus.scrape "argo_workflows" {
+      targets         = [{"__address__" = "argo-workflows-workflow-controller-metrics.argo.svc.cluster.local:9090"}]
+      scrape_interval = "{{ .Values.alloy.scrapeIntervalSeconds }}s"
+      forward_to      = [prometheus.remote_write.local.receiver]
+      job_name        = "argo-workflows"
+    }
 
     prometheus.remote_write "local" {
       endpoint {

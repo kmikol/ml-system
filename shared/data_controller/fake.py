@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
+import random
 from datetime import datetime
+from uuid import UUID
 
 from shared.schemas.predict_record import PredictRecord
 
@@ -17,11 +19,13 @@ class FakeDataController:
 
     def __init__(self) -> None:
         self._records: list[PredictRecord] = []
-        # Simulates the dataset_samples table: maps sample_id (UUID) → ground truth label.
-        self._dataset_labels: dict[str, int] = {}
+
+    # ── ServingDataController surface ─────────────────────────────────────────
 
     def store_prediction(self, record: PredictRecord) -> None:
         self._records.append(record.model_copy())
+
+    # ── DriftDataController surface ───────────────────────────────────────────
 
     def get_predictions(
         self,
@@ -37,41 +41,57 @@ class FakeDataController:
         return result
 
     def get_labeled_predictions(self, since: datetime) -> list[PredictRecord]:
-        return [r for r in self._records if r.label is not None and r.timestamp >= since]
+        return [
+            r for r in self._records
+            if r.annotated_label is not None and r.timestamp >= since
+        ]
 
-    def mark_candidate(self, prediction_id: str) -> None:
+    def get_annotated_count(self) -> int:
+        """Return annotated predictions count (simulates _COUNT_ANNOTATED query).
+
+        In-memory approximation: counts all annotated records, since the fake
+        has no concept of dataset_samples membership.
+        """
+        return sum(
+            1 for r in self._records
+            if r.annotation_status == "annotated"
+        )
+
+    # ── SamplingDataController surface ────────────────────────────────────────
+
+    def mark_candidate(self, uuid: UUID) -> None:
         for r in self._records:
-            if r.prediction_id == prediction_id and r.annotation_status == "none":
+            if r.uuid == uuid and r.annotation_status == "none":
                 r.annotation_status = "candidate"
                 return
 
-    def write_label(self, prediction_id: str, label: int) -> None:
-        for r in self._records:
-            if r.prediction_id == prediction_id:
-                r.label = label
-                r.annotation_status = "annotated"
-                return
+    def select_and_mark_candidates(self, limit: int) -> list[UUID]:
+        """Atomically select and mark eligible predictions as candidates.
 
-    def count_labels_since(self, since: datetime) -> int:
-        return sum(
-            1 for r in self._records
-            if r.label is not None and r.timestamp >= since
-        )
-
-    def get_candidates(self, limit: int) -> list[tuple[str, int]]:
-        """Return up to *limit* candidate predictions that have a dataset label.
-
-        Simulates the JOIN between predictions and dataset_samples performed by
-        AnnotationDataController.get_candidates().  Only records whose
-        prediction_id appears in ``_dataset_labels`` are returned.
+        Any prediction with ``annotation_status='none'`` is eligible.
         """
-        import random
+        eligible = [r for r in self._records if r.annotation_status == "none"]
+        random.shuffle(eligible)
+        selected = eligible[:limit]
+        for r in selected:
+            r.annotation_status = "candidate"
+        return [r.uuid for r in selected]
 
-        candidates = [
-            (r.prediction_id, self._dataset_labels[r.prediction_id])
-            for r in self._records
-            if r.annotation_status == "candidate"
-            and r.prediction_id in self._dataset_labels
-        ]
+    # ── AnnotationDataController surface ──────────────────────────────────────
+
+    def get_candidates(self, limit: int) -> list[UUID]:
+        """Return up to *limit* candidate prediction UUIDs.
+
+        Labels are resolved by the caller from the file-based oracle, not
+        from the in-memory store.
+        """
+        candidates = [r.uuid for r in self._records if r.annotation_status == "candidate"]
         random.shuffle(candidates)
         return candidates[:limit]
+
+    def write_label(self, uuid: UUID, label: int) -> None:
+        for r in self._records:
+            if r.uuid == uuid:
+                r.annotated_label = label
+                r.annotation_status = "annotated"
+                return

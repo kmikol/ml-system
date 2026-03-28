@@ -12,6 +12,26 @@
         "iconColor": "rgba(0, 211, 255, 1)",
         "name": "Annotations & Alerts",
         "type": "dashboard"
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "enable": true,
+        "expr": "ALERTS{alertname=\"PsiThresholdBreached\",alertstate=\"firing\"}",
+        "hide": false,
+        "iconColor": "red",
+        "name": "PSI Alert",
+        "step": "60s",
+        "titleFormat": "PSI Alert Triggered",
+        "type": "dashboard",
+        "filter": {
+          "type": "include",
+          "ids": [
+            11
+          ]
+        }
       }
     ]
   },
@@ -167,7 +187,7 @@
       "type": "timeseries"
     },
     {
-      "description": "Population Stability Index vs. training reference. Green < 0.10, yellow 0.10–0.25, red ≥ 0.25. Hidden when window < 30 samples (sentinel -1).",
+      "description": "Population Stability Index vs. training reference. Green < 0.10, yellow 0.10\u20130.25, red \u2265 0.25. Hidden when window < 30 samples (sentinel -1).",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -259,7 +279,7 @@
           "refId": "A"
         }
       ],
-      "title": "PSI — Prediction Class Distribution",
+      "title": "PSI \u2014 Prediction Class Distribution",
       "type": "timeseries"
     },
     {
@@ -368,7 +388,7 @@
           "refId": "C"
         }
       ],
-      "title": "Latency Percentiles — /predict",
+      "title": "Latency Percentiles \u2014 /predict",
       "type": "timeseries"
     },
     {
@@ -560,7 +580,7 @@
           "color": "rgba(255,0,255,0.7)"
         },
         "filterValues": {
-          "le": 1e-9
+          "le": 1e-09
         },
         "legend": {
           "show": true
@@ -680,7 +700,7 @@
           "refId": "A"
         }
       ],
-      "title": "Drift Window — Class Distribution",
+      "title": "Drift Window \u2014 Class Distribution",
       "type": "timeseries"
     },
     {
@@ -790,6 +810,132 @@
       ],
       "title": "Mahalanobis Score Percentiles",
       "type": "timeseries"
+    },
+    {
+      "id": 12,
+      "title": "Alert & Workflow State",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 40
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 20,
+            "lineInterpolation": "stepAfter",
+            "spanNulls": false,
+            "insertNulls": false
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "ALERTS{alertname=\"PsiThresholdBreached\",alertstate=\"firing\"}",
+          "legendFormat": "PSI Alert Active",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "argo_workflows_count{namespace=\"argo\",phase=\"Running\"}",
+          "legendFormat": "Workflows Running",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "title": "Annotated Samples (Unlabelled Dataset)",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 16
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 50
+              },
+              {
+                "color": "red",
+                "value": 200
+              }
+            ]
+          },
+          "unit": "short",
+          "noValue": "0"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "annotation_annotated_count",
+          "legendFormat": "annotated",
+          "refId": "A"
+        }
+      ]
     }
   ],
   "refresh": "10s",
@@ -804,7 +950,7 @@
   },
   "timepicker": {},
   "timezone": "",
-  "title": "ML System — Serving",
+  "title": "ML System \u2014 Serving",
   "uid": "ml-system-serving",
   "version": 1,
   "weekStart": ""

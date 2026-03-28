@@ -55,7 +55,7 @@ def _load_pool() -> list[bytes]:
     print(f"Loaded {len(images):,} images. Pre-serializing {_POOL_SIZE:,} payloads...", flush=True)
     idx = np.random.randint(0, len(images), size=_POOL_SIZE)
     return [
-        json.dumps({"image": images[i].tolist(), "request_id": str(uuids[i])}).encode()
+        json.dumps({"image": images[i].tolist(), "uuid": str(uuids[i])}).encode()
         for i in idx
     ]
 

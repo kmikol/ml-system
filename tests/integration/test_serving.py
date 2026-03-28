@@ -35,7 +35,7 @@ def test_predict_blank_image_returns_valid_response():
     assert body["prediction"] in range(10)
     assert 0.0 <= body["confidence"] <= 1.0
     assert body["model_version"] is not None
-    assert isinstance(body["request_id"], str)
+    assert isinstance(body["uuid"], str)
 
 
 def test_predict_white_image_returns_valid_response():
@@ -46,20 +46,22 @@ def test_predict_white_image_returns_valid_response():
     assert 0.0 <= body["confidence"] <= 1.0
 
 
-def test_predict_propagates_request_id():
+def test_predict_propagates_uuid():
+    import uuid
+    sample_uuid = str(uuid.uuid4())
     r = httpx.post(
         f"{BASE}/predict",
-        json={"image": _BLANK, "request_id": "test-trace-42"},
+        json={"image": _BLANK, "uuid": sample_uuid},
         timeout=10,
     )
     assert r.status_code == 200
-    assert r.json()["request_id"] == "test-trace-42"
+    assert r.json()["uuid"] == sample_uuid
 
 
-def test_predict_generates_request_id_when_omitted():
+def test_predict_generates_uuid_when_omitted():
     r = httpx.post(f"{BASE}/predict", json={"image": _BLANK}, timeout=10)
     assert r.status_code == 200
-    assert len(r.json()["request_id"]) > 0
+    assert len(r.json()["uuid"]) > 0
 
 
 @pytest.mark.parametrize("bad_body,description", [

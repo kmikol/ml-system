@@ -1,0 +1,168 @@
+# Argo Events CRD instances for the PSI alert pipeline.
+# Applied separately from Helm via: kubectl apply --server-side --force-conflicts
+# Reason: Argo Events controller uses SSA to manage .spec.triggers on Sensor,
+# which conflicts with Helm's client-side apply on subsequent upgrades.
+---
+# EventBus: NATS messaging backbone required by Argo Events.
+# Must be named "default" so EventSource and Sensor discover it automatically.
+apiVersion: argoproj.io/v1alpha1
+kind: EventBus
+metadata:
+  name: default
+  namespace: ml-system
+spec:
+  nats:
+    native:
+      replicas: 1
+      auth: none
+---
+# EventSource: receives the AlertManager webhook POST when PSI > 0.25.
+apiVersion: argoproj.io/v1alpha1
+kind: EventSource
+metadata:
+  name: psi-alert
+  namespace: ml-system
+spec:
+  webhook:
+    psi-alert:
+      port: "12000"
+      endpoint: /psi-alert
+      method: POST
+---
+# Service for the EventSource webhook pod. Argo Events should auto-create this
+# but doesn't reliably do so across versions — we create it explicitly.
+apiVersion: v1
+kind: Service
+metadata:
+  name: psi-alert-eventsource-svc
+  namespace: ml-system
+spec:
+  selector:
+    eventsource-name: psi-alert
+  ports:
+    - port: 12000
+      targetPort: 12000
+---
+# Sensor: listens to the EventSource and submits a Workflow to the argo namespace.
+apiVersion: argoproj.io/v1alpha1
+kind: Sensor
+metadata:
+  name: psi-alert-sensor
+  namespace: ml-system
+spec:
+  template:
+    serviceAccountName: argo-events-sa
+  dependencies:
+    - name: psi-alert-dep
+      eventSourceName: psi-alert
+      eventName: psi-alert
+  triggers:
+    - template:
+        name: trigger-sample-and-label
+        argoWorkflow:
+          group: argoproj.io
+          version: v1alpha1
+          resource: workflows
+          operation: submit
+          source:
+            resource:
+              apiVersion: argoproj.io/v1alpha1
+              kind: Workflow
+              metadata:
+                generateName: sample-and-label-
+                namespace: argo
+              spec:
+                workflowTemplateRef:
+                  name: sample-and-label
+---
+# RBAC: grants the default service account in argo namespace permission to
+# create workflowtaskresults — required by Argo's emissary executor for every
+# workflow pod, regardless of what the workflow does.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: workflow-pod-role
+  namespace: argo
+rules:
+  - apiGroups: ["argoproj.io"]
+    resources: ["workflowtaskresults"]
+    verbs: ["create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: workflow-pod-role-binding
+  namespace: argo
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: workflow-pod-role
+subjects:
+  - kind: ServiceAccount
+    name: default
+    namespace: argo
+---
+# EventSource: receives the AlertManager webhook POST when annotation_annotated_count >= 50.
+apiVersion: argoproj.io/v1alpha1
+kind: EventSource
+metadata:
+  name: annotation-ready
+  namespace: ml-system
+spec:
+  webhook:
+    annotation-ready:
+      port: "12001"
+      endpoint: /annotation-ready
+      method: POST
+---
+# Service for the annotation-ready EventSource webhook pod.
+apiVersion: v1
+kind: Service
+metadata:
+  name: annotation-ready-eventsource-svc
+  namespace: ml-system
+spec:
+  selector:
+    eventsource-name: annotation-ready
+  ports:
+    - port: 12001
+      targetPort: 12001
+---
+# Sensor: fires when BOTH PSI alert AND annotation count alert have fired.
+# The conditions field implements AND logic — the trigger only executes when
+# both dependencies have received an event since the last reset.
+apiVersion: argoproj.io/v1alpha1
+kind: Sensor
+metadata:
+  name: retrain-sensor
+  namespace: ml-system
+spec:
+  template:
+    serviceAccountName: argo-events-sa
+  dependencies:
+    - name: psi-alert-dep
+      eventSourceName: psi-alert
+      eventName: psi-alert
+    - name: annotation-ready-dep
+      eventSourceName: annotation-ready
+      eventName: annotation-ready
+  triggers:
+    - template:
+        name: trigger-retrain
+        conditions: "psi-alert-dep && annotation-ready-dep"
+        argoWorkflow:
+          group: argoproj.io
+          version: v1alpha1
+          resource: workflows
+          operation: submit
+          source:
+            resource:
+              apiVersion: argoproj.io/v1alpha1
+              kind: Workflow
+              metadata:
+                generateName: retrain-
+                namespace: argo
+              spec:
+                workflowTemplateRef:
+                  name: retrain
+# WorkflowTemplates are defined in k8s/argo/workflows/ and applied separately.

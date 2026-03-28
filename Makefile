@@ -126,7 +126,7 @@ help: ## Show this help
 #
 # ═══════════════════════════════════════════════════════════════
 
-.PHONY: k3d.bootstrap k3d.create k3d.delete k3d.build k3d.import k3d.deploy k3d.status k3d.logs k3d.shell k3d.redeploy k3d.train k3d.annotate k3d.serve.restart k3d.keda.install k3d.ml-exporter.restart k3d.argo.install
+.PHONY: k3d.bootstrap k3d.bootstrap.workflow k3d.create k3d.delete k3d.build k3d.import k3d.deploy k3d.status k3d.logs k3d.shell k3d.redeploy k3d.train k3d.annotate k3d.serve.restart k3d.keda.install k3d.ml-exporter.restart k3d.argo.install
 
 k3d.keda.install: ## Install KEDA into the cluster (run once after k3d.create)
 	@echo "$(CYAN)Installing KEDA...$(RESET)"
@@ -158,49 +158,68 @@ k3d.argo.install: ## Install Argo Workflows + Argo Events into the cluster (run 
 	@echo "$(GREEN)Argo Workflows UI: http://localhost:2746$(RESET)"
 	@echo "$(GREEN)Argo Workflows + Argo Events installed. Run 'make k3d.deploy' to apply EventBus/EventSource/Sensor.$(RESET)"
 
-k3d.bootstrap: ## First-time setup: create cluster, install KEDA+Argo, build+import images, deploy, seed data, train, restart serving
+k3d.bootstrap: ## First-time setup: create cluster, install KEDA+Argo, build+import images, deploy, run bootstrap workflow
 	@echo "$(CYAN)╔══════════════════════════════════════════════════════╗$(RESET)"
 	@echo "$(CYAN)║  k3d bootstrap - full first-time startup             ║$(RESET)"
 	@echo "$(CYAN)╚══════════════════════════════════════════════════════╝$(RESET)"
 	@echo ""
-	@echo "$(CYAN)[1/11] Creating k3d cluster...$(RESET)"
+	@echo "$(CYAN)[1/8] Creating k3d cluster...$(RESET)"
 	@$(MAKE) --no-print-directory k3d.create
 	@echo ""
-	@echo "$(CYAN)[2/11] Installing KEDA...$(RESET)"
+	@echo "$(CYAN)[2/8] Installing KEDA...$(RESET)"
 	@$(MAKE) --no-print-directory k3d.keda.install
 	@echo ""
-	@echo "$(CYAN)[3/11] Installing Argo Workflows + Argo Events...$(RESET)"
+	@echo "$(CYAN)[3/8] Installing Argo Workflows + Argo Events...$(RESET)"
 	@$(MAKE) --no-print-directory k3d.argo.install
 	@echo ""
-	@echo "$(CYAN)[4/11] Preparing dataset (download + partition + assign UUIDs)...$(RESET)"
+	@echo "$(CYAN)[4/8] Preparing dataset (download + partition + assign UUIDs)...$(RESET)"
 	@$(MAKE) --no-print-directory data.prepare
 	@echo ""
-	@echo "$(CYAN)[5/11] Building Docker images (oracle files baked in after prepare)...$(RESET)"
+	@echo "$(CYAN)[5/8] Building Docker images (data/v0/ + scripts/ baked into training image after prepare)...$(RESET)"
 	@$(MAKE) --no-print-directory k3d.build
 	@echo ""
-	@echo "$(CYAN)[6/11] Importing images into k3d...$(RESET)"
+	@echo "$(CYAN)[6/8] Importing images into k3d...$(RESET)"
 	@$(MAKE) --no-print-directory k3d.import
 	@echo ""
-	@echo "$(CYAN)[7/11] Deploying services with Helm...$(RESET)"
+	@echo "$(CYAN)[7/8] Deploying services with Helm...$(RESET)"
 	@$(MAKE) --no-print-directory k3d.deploy
 	@echo ""
-	@echo "$(CYAN)[8/11] Seeding dataset into Postgres + MinIO...$(RESET)"
-	@$(MAKE) --no-print-directory data.seed
-	@echo ""
-	@echo "$(CYAN)[9/11] Verifying dataset integrity...$(RESET)"
-	@$(MAKE) --no-print-directory data.verify
-	@echo ""
-	@echo "$(CYAN)[10/11] Training model...$(RESET)"
-	@$(MAKE) --no-print-directory k3d.train
-	@echo ""
-	@echo "$(CYAN)[11/11] Restarting serving to load the trained model...$(RESET)"
-	@$(MAKE) --no-print-directory k3d.serve.restart
+	@echo "$(CYAN)[8/8] Submitting bootstrap-init Argo workflow (seed → verify → train → restart-serving)...$(RESET)"
+	@$(MAKE) --no-print-directory k3d.bootstrap.workflow
 	@echo ""
 	@echo "$(GREEN)╔══════════════════════════════════════════════════════╗$(RESET)"
 	@echo "$(GREEN)║  Bootstrap complete!                                 ║$(RESET)"
 	@echo "$(GREEN)╚══════════════════════════════════════════════════════╝$(RESET)"
 	@echo ""
 	@$(MAKE) --no-print-directory k3d.status
+
+k3d.bootstrap.workflow: ## Submit bootstrap-init Argo workflow and wait for completion (seed → verify → train → restart-serving)
+	@echo "$(CYAN)Deleting any previous bootstrap-init-run workflow...$(RESET)"
+	kubectl delete workflow bootstrap-init-run -n argo --ignore-not-found=true
+	@echo "$(CYAN)Submitting bootstrap-init workflow...$(RESET)"
+	printf '%s\n' \
+		'apiVersion: argoproj.io/v1alpha1' \
+		'kind: Workflow' \
+		'metadata:' \
+		'  name: bootstrap-init-run' \
+		'  namespace: argo' \
+		'spec:' \
+		'  workflowTemplateRef:' \
+		'    name: bootstrap-init' \
+		| kubectl create -f -
+	@echo "$(CYAN)Workflow submitted. Monitor at: http://localhost:2746$(RESET)"
+	@echo "$(CYAN)Waiting for workflow to complete...$(RESET)"
+	@until PHASE=$$(kubectl get workflow bootstrap-init-run -n argo \
+		-o jsonpath='{.status.phase}' 2>/dev/null); \
+		[ "$$PHASE" = "Succeeded" ] || [ "$$PHASE" = "Failed" ] || [ "$$PHASE" = "Error" ]; do \
+		echo "  status: $${PHASE:-Pending}..."; sleep 10; \
+	done; \
+	PHASE=$$(kubectl get workflow bootstrap-init-run -n argo -o jsonpath='{.status.phase}'); \
+	if [ "$$PHASE" != "Succeeded" ]; then \
+		echo "$(RED)Bootstrap workflow $$PHASE. Check Argo UI: http://localhost:2746$(RESET)"; \
+		exit 1; \
+	fi
+	@echo "$(GREEN)Bootstrap workflow succeeded.$(RESET)"
 
 k3d.create: ## Create k3d cluster with port mappings
 	@echo "$(CYAN)Creating k3d cluster '$(K3D_CLUSTER)'...$(RESET)"
@@ -251,6 +270,7 @@ k3d.import: ## Import custom images into k3d's container runtime
 	k3d image import $(IMG_MLFLOW) -c $(K3D_CLUSTER)
 	k3d image import $(IMG_ML_EXPORTER) -c $(K3D_CLUSTER)
 	k3d image import $(IMG_ANNOTATION) -c $(K3D_CLUSTER)
+	k3d image import $(IMG_TRAINING) -c $(K3D_CLUSTER)
 	@echo "$(GREEN)Images imported.$(RESET)"
 
 k3d.deploy: ## Deploy (or upgrade) all services with Helm, then apply Argo Events CRD instances
@@ -398,7 +418,7 @@ k3d.annotate: ## Build annotation image, run annotation job in k3d, stream logs,
 
 .PHONY: build build.serving build.training build.mlflow build.ml-exporter build.annotation
 
-build: build.serving build.mlflow build.ml-exporter build.annotation ## Build all custom images (serving, mlflow, ml-exporter, annotation)
+build: build.serving build.mlflow build.ml-exporter build.annotation build.training ## Build all custom images (serving, mlflow, ml-exporter, annotation, training)
 
 build.serving: ## Build serving image
 	docker build -t $(IMG_SERVING) -f serving/Dockerfile .

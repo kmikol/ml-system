@@ -4,6 +4,7 @@ No Postgres or external services required — FakeDataController is fully in-mem
 """
 
 from datetime import UTC, datetime
+from typing import Literal
 from uuid import UUID, uuid4
 
 from shared.data_controller.fake import FakeDataController
@@ -15,13 +16,13 @@ def _record(
     timestamp: datetime | None = None,
     model_version: str = "v1",
     annotated_label: int | None = None,
-    annotation_status: str = "none",
+    annotation_status: Literal["none", "candidate", "annotated"] = "none",
 ) -> PredictRecord:
     return PredictRecord(
         uuid=uuid or uuid4(),
         timestamp=timestamp or datetime(2026, 1, 1, tzinfo=UTC),
         model_version=model_version,
-        embedding=[0.0] * 32,
+        embedding=[0.0] * 64,
         prediction=0,
         confidence=0.9,
         prediction_distribution=[0.1] * 10,
@@ -184,14 +185,45 @@ class TestWriteLabel:
     def test_sets_annotated_label_and_status(self):
         ctrl = FakeDataController()
         uid = uuid4()
-        ctrl.store_prediction(_record(uid))
+        ctrl.store_prediction(_record(uid, annotation_status="candidate"))
         ctrl.write_label(uid, 7)
         assert ctrl._records[0].annotated_label == 7
         assert ctrl._records[0].annotation_status == "annotated"
 
+    def test_no_op_when_not_candidate(self):
+        ctrl = FakeDataController()
+        uid = uuid4()
+        ctrl.store_prediction(_record(uid))  # annotation_status='none'
+        ctrl.write_label(uid, 7)
+        assert ctrl._records[0].annotated_label is None
+        assert ctrl._records[0].annotation_status == "none"
+
     def test_ignores_unknown_id(self):
         ctrl = FakeDataController()
         ctrl.write_label(uuid4(), 5)  # must not raise
+
+
+# ── reset_candidate ───────────────────────────────────────────────────────────
+
+
+class TestResetCandidate:
+    def test_resets_candidate_to_none(self):
+        ctrl = FakeDataController()
+        uid = uuid4()
+        ctrl.store_prediction(_record(uid, annotation_status="candidate"))
+        ctrl.reset_candidate(uid)
+        assert ctrl._records[0].annotation_status == "none"
+
+    def test_no_op_when_not_candidate(self):
+        ctrl = FakeDataController()
+        uid = uuid4()
+        ctrl.store_prediction(_record(uid, annotation_status="annotated"))
+        ctrl.reset_candidate(uid)
+        assert ctrl._records[0].annotation_status == "annotated"
+
+    def test_ignores_unknown_id(self):
+        ctrl = FakeDataController()
+        ctrl.reset_candidate(uuid4())  # must not raise
 
 
 # ── get_candidates ────────────────────────────────────────────────────────────

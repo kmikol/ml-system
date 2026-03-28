@@ -11,7 +11,7 @@ Requires Docker (Postgres + MinIO containers defined in docker-compose.test.yml)
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
+from typing import Literal
 
 import pytest
 
@@ -27,14 +27,14 @@ _EPOCH = datetime(2000, 1, 1, tzinfo=UTC)
 
 def _record(
     model_version: str = "v1",
-    annotation_status: str = "none",
+    annotation_status: Literal["none", "candidate", "annotated"] = "none",
     ts: datetime | None = None,
 ) -> PredictRecord:
     """Build a PredictRecord with a fresh UUID."""
     return PredictRecord(
         timestamp=ts or datetime.now(UTC),
         model_version=model_version,
-        embedding=[0.0] * 32,
+        embedding=[0.0] * 64,
         prediction=3,
         confidence=0.87,
         prediction_distribution=[0.1] * 10,
@@ -129,7 +129,8 @@ class TestDriftDataController:
         serving.store_prediction(record)
         serving.store_prediction(unlabeled)
 
-        # Write a label via AnnotationDataController so the DB row is updated
+        # Must be a candidate before write_label will take effect
+        SamplingDataController().select_and_mark_candidates(limit=100)
         AnnotationDataController().write_label(record.uuid, 5)
 
         drift = DriftDataController()
@@ -161,9 +162,10 @@ class TestSamplingDataController:
         """Already-annotated predictions are not downgraded by a second sampling run."""
         record = _record()
         ServingDataController().store_prediction(record)
+        SamplingDataController().select_and_mark_candidates(limit=100)
         AnnotationDataController().write_label(record.uuid, 7)
 
-        # Sampling must not overwrite 'annotated' status
+        # A second sampling run must not overwrite 'annotated' status
         SamplingDataController().select_and_mark_candidates(limit=100)
 
         results = DriftDataController().get_predictions(since=_EPOCH)
@@ -189,6 +191,7 @@ class TestAnnotationDataController:
     def test_write_label_sets_annotated_label_and_status(self):
         record = _record()
         ServingDataController().store_prediction(record)
+        SamplingDataController().select_and_mark_candidates(limit=100)
 
         AnnotationDataController().write_label(record.uuid, 9)
 
@@ -218,6 +221,40 @@ class TestAnnotationDataController:
 
         assert none_record.uuid not in candidates
         assert annotated_record.uuid not in candidates
+
+    def test_write_label_is_noop_on_non_candidate(self):
+        """write_label must not update a prediction that is still 'none'."""
+        record = _record(annotation_status="none")
+        ServingDataController().store_prediction(record)
+
+        AnnotationDataController().write_label(record.uuid, 7)
+
+        results = DriftDataController().get_predictions(since=_EPOCH)
+        stored = next(r for r in results if r.uuid == record.uuid)
+        assert stored.annotated_label is None
+        assert stored.annotation_status == "none"
+
+    def test_reset_candidate_reverts_to_none(self):
+        """reset_candidate() moves a 'candidate' prediction back to 'none'."""
+        record = _record(annotation_status="candidate")
+        ServingDataController().store_prediction(record)
+
+        AnnotationDataController().reset_candidate(record.uuid)
+
+        results = DriftDataController().get_predictions(since=_EPOCH)
+        stored = next(r for r in results if r.uuid == record.uuid)
+        assert stored.annotation_status == "none"
+
+    def test_reset_candidate_is_noop_on_non_candidate(self):
+        """reset_candidate() on a 'none' prediction leaves status unchanged."""
+        record = _record(annotation_status="none")
+        ServingDataController().store_prediction(record)
+
+        AnnotationDataController().reset_candidate(record.uuid)
+
+        results = DriftDataController().get_predictions(since=_EPOCH)
+        stored = next(r for r in results if r.uuid == record.uuid)
+        assert stored.annotation_status == "none"
 
 
 # ── End-to-end workflow ───────────────────────────────────────────────────────
@@ -256,3 +293,26 @@ class TestFullWorkflow:
         assert annotated is not None
         assert annotated.annotated_label == 3
         assert annotated.annotation_status == "annotated"
+
+    def test_oracle_miss_reset_and_resample(self):
+        """Oracle miss → reset_candidate → prediction eligible for next sampling run."""
+        record = _record()
+        ServingDataController().store_prediction(record)
+
+        # Sampling marks it as a candidate
+        SamplingDataController().select_and_mark_candidates(limit=100)
+        assert next(
+            r for r in DriftDataController().get_predictions(since=_EPOCH)
+            if r.uuid == record.uuid
+        ).annotation_status == "candidate"
+
+        # Oracle miss: annotation job resets it
+        AnnotationDataController().reset_candidate(record.uuid)
+        assert next(
+            r for r in DriftDataController().get_predictions(since=_EPOCH)
+            if r.uuid == record.uuid
+        ).annotation_status == "none"
+
+        # A subsequent sampling run picks it up again
+        marked_again = SamplingDataController().select_and_mark_candidates(limit=100)
+        assert record.uuid in marked_again

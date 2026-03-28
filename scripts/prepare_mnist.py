@@ -2,7 +2,7 @@
 # scripts/prepare_mnist.py
 """
 Download MNIST, resize images to 14x14, normalize to float32 [0, 1], and
-partition into the v0 dataset (10% of training samples) and a remaining pool.
+partition into the v0 dataset (1% of training samples) and a remaining pool.
 
 A UUID is assigned to every sample at creation time and saved as uuids.npy
 alongside images.npy and labels.npy.  Downstream scripts (seed_dataset.py,
@@ -12,10 +12,10 @@ throughout the entire pipeline.
 Output layout:
     data/
     ├── v0/
-    │   ├── train/   images.npy (4800×14×14)   labels.npy (4800,)   uuids.npy (4800,)
-    │   ├── val/     images.npy (600×14×14)     labels.npy (600,)    uuids.npy (600,)
-    │   └── test/    images.npy (600×14×14)     labels.npy (600,)    uuids.npy (600,)
-    ├── remaining/   images.npy (54000×14×14)   labels.npy (54000,)  uuids.npy (54000,)
+    │   ├── train/   images.npy (480×14×14)   labels.npy (480,)   uuids.npy (480,)
+    │   ├── val/     images.npy (60×14×14)     labels.npy (60,)    uuids.npy (600,)
+    │   └── test/    images.npy (60×14×14)     labels.npy (60,)    uuids.npy (600,)
+    ├── remaining/   images.npy (59400×14×14)   labels.npy (59400,)  uuids.npy (59400,)
     └── mnist_test/  images.npy (10000×14×14)   labels.npy (10000,)  uuids.npy (10000,)
 
 Usage:
@@ -29,7 +29,7 @@ import numpy as np
 from PIL import Image
 
 TARGET_H, TARGET_W = 14, 14
-V0_FRACTION = 0.10
+V0_FRACTION = 0.01
 TRAIN_RATIO, VAL_RATIO = 0.80, 0.10  # remaining 0.10 → test
 SEED = 42
 DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
@@ -64,7 +64,7 @@ def main():
         raise SystemExit(
             "torchvision is required to download MNIST.\n"
             "Install it with: pip install torchvision"
-        )
+        ) from None
 
     raw_dir = os.path.join(DATA_DIR, "raw")
     print("Downloading MNIST...")
@@ -78,7 +78,7 @@ def main():
     test_uuids = _make_uuids(len(test_images))
     _save(os.path.join(DATA_DIR, "mnist_test"), test_images, test_labels, test_uuids)
 
-    # ── Training set: shuffle, take 10% for v0 ───────────────────
+    # ── Training set: shuffle, take 1% for v0 ────────────────────
     print("Processing training set (60,000 samples)...")
     all_images = _resize_images(train_ds.data.numpy())
     all_labels = train_ds.targets.numpy().astype(np.int64)
@@ -87,8 +87,8 @@ def main():
     rng = np.random.default_rng(SEED)
     idx = rng.permutation(len(all_images))
     n_v0 = int(len(idx) * V0_FRACTION)
-    v0_idx = idx[:n_v0]          # 6,000 samples
-    remaining_idx = idx[n_v0:]   # 54,000 samples
+    v0_idx = idx[:n_v0]          # 600 samples
+    remaining_idx = idx[n_v0:]   # 59,400 samples
 
     # ── Remaining pool ────────────────────────────────────────────
     print(f"Saving remaining pool ({len(remaining_idx)} samples)...")

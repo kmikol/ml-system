@@ -4,89 +4,85 @@ ML metrics exporter. Polls the predictions DB on a fixed interval and exposes
 domain metrics as Prometheus Gauges: drift (PSI), class distribution, confidence,
 and annotation pipeline state.
 
+Design: four layers, no module-level side effects.
+  1. ExporterConfig  — pure config object, created in lifespan
+  2. Computation     — compute_psi / compute_window_metrics pure functions
+  3. MetricsEmitter  — Protocol + PrometheusEmitter (per-instance registry)
+  4. DriftPoller     — orchestration; all state as instance attributes
+
 Usage: uvicorn monitoring.ml_exporter.main:app --host 0.0.0.0 --port 8001
 """
+
+from __future__ import annotations
 
 import logging
 import math
 import tempfile
 import threading
 import time
-from collections import Counter
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Any, Protocol
 
-from fastapi import FastAPI
-from fastapi.responses import JSONResponse
-from prometheus_client import Gauge, make_asgi_app
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse, Response
+from prometheus_client import (
+    CONTENT_TYPE_LATEST,
+    CollectorRegistry,
+    Gauge,
+    generate_latest,
+)
 
 from shared.config import require_env
 from shared.data_controller.drift import DriftDataController
 from shared.model_artifact_controller import ModelArtifactController, ModelArtifactError
+from shared.schemas.predict_record import PredictRecord
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ── Config ────────────────────────────────────────────────────────
-MODEL_NAME = require_env("MODEL_NAME")
-MODEL_STAGE = require_env("MODEL_STAGE")
-DRIFT_POLL_INTERVAL = int(require_env("DRIFT_POLL_INTERVAL"))
-DRIFT_WINDOW_SECONDS = int(require_env("DRIFT_WINDOW_SECONDS"))
-
 # Minimum predictions in window before PSI is meaningful.
 _MIN_SAMPLES = 30
-# Sentinel value for PSI when the window is too small.
+# Sentinel value for PSI when the window is too small or reference unavailable.
 _PSI_SENTINEL = -1.0
 # Epsilon to prevent log(0) in PSI formula.
 _EPS = 1e-6
 
-# ── Prometheus metrics ────────────────────────────────────────────
-_sample_count = Gauge("drift_window_sample_count", "Predictions in current window")
-_class_count = Gauge(
-    "drift_window_class_count", "Predictions per class in window", ["class_label"]
-)
-_class_freq = Gauge(
-    "drift_window_class_freq", "Class proportion in window (0–1)", ["class_label"]
-)
-_confidence_mean = Gauge("drift_window_confidence_mean", "Mean confidence score in window")
-_psi = Gauge(
-    "drift_psi_class_distribution",
-    "PSI of prediction class distribution vs. MLflow reference "
-    "(-1 = insufficient samples)",
-)
-_poll_age = Gauge(
-    "drift_last_poll_age_seconds", "Seconds since last successful poll"
-)
-_annotated_count = Gauge(
-    "annotation_annotated_count",
-    "Total predictions with annotation_status='annotated' not yet in any dataset",
-)
+
+# ── Layer 1: Config ────────────────────────────────────────────────────────────
 
 
-# ── Shared state (read/written by poll thread, read by health endpoint) ──
-_lock = threading.Lock()
-_current_run_id: str | None = None
-_ref_class_freq: list[float] | None = None  # 10-element list from reference_distribution.json
-_last_poll_ts: float = 0.0
-_artifact_dir = tempfile.mkdtemp(prefix="ml_exporter_")
+@dataclass(frozen=True)
+class ExporterConfig:
+    model_name: str
+    model_stage: str
+    poll_interval: int
+    window_seconds: int
 
-_data_controller = DriftDataController()
-_artifact_controller = ModelArtifactController()
-
-
-def _load_reference(run_id: str) -> list[float] | None:
-    """Download reference_distribution.json and return prediction_class_frequencies."""
-    try:
-        data = _artifact_controller.download_reference_distribution(run_id, _artifact_dir)
-        freqs = data["prediction_class_frequencies"]
-        logger.info(f"Reference distribution loaded from run {run_id}: {freqs}")
-        return freqs
-    except Exception as e:
-        logger.warning(f"Failed to load reference distribution from run {run_id}: {e}")
-        return None
+    @classmethod
+    def from_env(cls) -> ExporterConfig:
+        return cls(
+            model_name=require_env("MODEL_NAME"),
+            model_stage=require_env("MODEL_STAGE"),
+            poll_interval=int(require_env("DRIFT_POLL_INTERVAL")),
+            window_seconds=int(require_env("DRIFT_WINDOW_SECONDS")),
+        )
 
 
-def _compute_psi(actual: list[float], reference: list[float]) -> float:
+# ── Layer 2: Pure computation ──────────────────────────────────────────────────
+
+
+@dataclass
+class WindowMetrics:
+    n: int
+    class_counts: dict[int, int]
+    class_freqs: dict[int, float]
+    confidence_mean: float
+    psi: float | None  # None when reference unavailable or window too small
+
+
+def compute_psi(actual: list[float], reference: list[float]) -> float:
     """
     Compute PSI between actual and reference class distributions.
 
@@ -103,113 +99,265 @@ def _compute_psi(actual: list[float], reference: list[float]) -> float:
     return psi
 
 
-def _poll() -> None:
-    """Single poll: fetch window, compute metrics, update Gauges."""
-    global _current_run_id, _ref_class_freq, _last_poll_ts
-
-    # Check for model version change and reload reference if needed.
-    try:
-        run_id = _artifact_controller.get_production_run_id(MODEL_NAME, MODEL_STAGE)
-        with _lock:
-            if run_id != _current_run_id:
-                logger.info(f"Model version changed: {_current_run_id} → {run_id}")
-                ref = _load_reference(run_id)
-                _current_run_id = run_id
-                _ref_class_freq = ref
-    except ModelArtifactError as e:
-        logger.warning(f"MLflow unavailable, using cached reference: {e}")
-
-    # Fetch predictions window.
-    since = datetime.now(UTC) - timedelta(seconds=DRIFT_WINDOW_SECONDS)
-    try:
-        records = _data_controller.get_predictions(since=since)
-    except Exception as e:
-        logger.warning(f"DB poll failed: {e}")
-        return
-
+def compute_window_metrics(
+    records: list[PredictRecord],
+    reference: list[float] | None,
+) -> WindowMetrics:
+    """Pure function: compute all window metrics from records and optional reference."""
     n = len(records)
-    _sample_count.set(n)
+    counts: dict[int, int] = {}
+    freqs: dict[int, float] = {}
 
-    if n == 0:
-        for c in range(10):
-            _class_count.labels(class_label=str(c)).set(0)
-            _class_freq.labels(class_label=str(c)).set(0.0)
-        _confidence_mean.set(0.0)
-        _psi.set(_PSI_SENTINEL)
-        with _lock:
-            _last_poll_ts = time.time()
-        return
-
-    # Class distribution.
-    counts = Counter(r.prediction for r in records)
-    actual_freq = []
     for c in range(10):
-        cnt = counts.get(c, 0)
-        freq = cnt / n
-        _class_count.labels(class_label=str(c)).set(cnt)
-        _class_freq.labels(class_label=str(c)).set(freq)
-        actual_freq.append(freq)
+        cnt = sum(1 for r in records if r.prediction == c)
+        counts[c] = cnt
+        freqs[c] = cnt / n if n > 0 else 0.0
 
-    # Mean confidence.
-    _confidence_mean.set(sum(r.confidence for r in records) / n)
+    conf_mean = sum(r.confidence for r in records) / n if n > 0 else 0.0
 
-    # PSI.
-    with _lock:
-        ref = _ref_class_freq
+    psi: float | None = None
+    if reference is not None and n >= _MIN_SAMPLES:
+        actual_freq = [freqs[c] for c in range(10)]
+        psi = compute_psi(actual_freq, reference)
 
-    if ref is None:
-        logger.warning("Reference distribution not yet loaded, skipping PSI.")
-        _psi.set(_PSI_SENTINEL)
-    elif n < _MIN_SAMPLES:
-        logger.info(f"Window too small ({n} < {_MIN_SAMPLES}), PSI set to sentinel.")
-        _psi.set(_PSI_SENTINEL)
-    else:
-        psi_val = _compute_psi(actual_freq, ref)
-        _psi.set(psi_val)
-        logger.info(
-            f"Poll: n={n} PSI={psi_val:.4f} "
-            f"dist={[round(f, 3) for f in actual_freq]}"
+    return WindowMetrics(
+        n=n,
+        class_counts=counts,
+        class_freqs=freqs,
+        confidence_mean=conf_mean,
+        psi=psi,
+    )
+
+
+# ── Layer 3: Metrics emission ──────────────────────────────────────────────────
+
+
+class MetricsEmitter(Protocol):
+    def emit(self, metrics: WindowMetrics, annotated_count: int) -> None: ...
+    def update_poll_age(self, age: float) -> None: ...
+    def generate_metrics(self) -> tuple[bytes, str]: ...
+
+
+class PrometheusEmitter:
+    """Wraps a private CollectorRegistry so multiple instances can coexist (e.g. in tests)."""
+
+    def __init__(self) -> None:
+        self._registry = CollectorRegistry()
+        self._sample_count = Gauge(
+            "drift_window_sample_count",
+            "Predictions in current window",
+            registry=self._registry,
+        )
+        self._class_count = Gauge(
+            "drift_window_class_count",
+            "Predictions per class in window",
+            ["class_label"],
+            registry=self._registry,
+        )
+        self._class_freq = Gauge(
+            "drift_window_class_freq",
+            "Class proportion in window (0–1)",
+            ["class_label"],
+            registry=self._registry,
+        )
+        self._confidence_mean = Gauge(
+            "drift_window_confidence_mean",
+            "Mean confidence score in window",
+            registry=self._registry,
+        )
+        self._psi = Gauge(
+            "drift_psi_class_distribution",
+            "PSI of prediction class distribution vs. MLflow reference "
+            "(-1 = insufficient samples)",
+            registry=self._registry,
+        )
+        self._poll_age = Gauge(
+            "drift_last_poll_age_seconds",
+            "Seconds since last successful poll",
+            registry=self._registry,
+        )
+        self._annotated_count = Gauge(
+            "annotation_annotated_count",
+            "Total predictions with annotation_status='annotated' not yet in any dataset",
+            registry=self._registry,
         )
 
-    # Annotation pipeline state.
-    try:
-        count = _data_controller.get_annotated_count()
-        _annotated_count.set(count)
-        logger.info(f"Annotated count (not in training set): {count}")
-    except Exception as e:
-        logger.warning(f"Annotated count poll failed: {e}", exc_info=True)
+    def emit(self, metrics: WindowMetrics, annotated_count: int) -> None:
+        self._sample_count.set(metrics.n)
+        for c in range(10):
+            self._class_count.labels(class_label=str(c)).set(metrics.class_counts.get(c, 0))
+            self._class_freq.labels(class_label=str(c)).set(metrics.class_freqs.get(c, 0.0))
+        self._confidence_mean.set(metrics.confidence_mean)
+        self._psi.set(metrics.psi if metrics.psi is not None else _PSI_SENTINEL)
+        self._annotated_count.set(annotated_count)
 
-    with _lock:
-        _last_poll_ts = time.time()
+    def update_poll_age(self, age: float) -> None:
+        self._poll_age.set(age)
+
+    def generate_metrics(self) -> tuple[bytes, str]:
+        return generate_latest(self._registry), CONTENT_TYPE_LATEST
 
 
-def _poll_loop() -> None:
+# ── Layer 4: Orchestration ─────────────────────────────────────────────────────
+
+
+class DriftPoller:
+    """Stateful orchestrator: fetches data, manages reference reload, calls emitter.
+
+    All external dependencies are injected via the constructor so the class is
+    fully testable without environment variables, a real DB, or MLflow.
+    """
+
+    def __init__(
+        self,
+        config: ExporterConfig,
+        data_controller: Any,
+        artifact_controller: Any,
+        emitter: MetricsEmitter,
+        artifact_dir: str,
+    ) -> None:
+        self._config = config
+        self._data = data_controller
+        self._artifacts = artifact_controller
+        self._emitter = emitter
+        self._artifact_dir = artifact_dir
+
+        self._lock = threading.Lock()
+        self._current_run_id: str | None = None
+        self._ref_class_freq: list[float] | None = None
+        self._last_poll_ts: float = 0.0
+
+    # ── Public observers ───────────────────────────────────────────────────────
+
+    def current_run_id(self) -> str | None:
+        with self._lock:
+            return self._current_run_id
+
+    def reference_loaded(self) -> bool:
+        with self._lock:
+            return self._ref_class_freq is not None
+
+    def poll_age(self) -> float | None:
+        """Seconds since the last successful poll, or None if never polled."""
+        with self._lock:
+            ts = self._last_poll_ts
+        return time.time() - ts if ts > 0 else None
+
+    # ── Core poll ──────────────────────────────────────────────────────────────
+
+    def poll(self) -> None:
+        """Single poll iteration: check reference, fetch window, emit metrics."""
+        self._maybe_reload_reference()
+
+        since = datetime.now(UTC) - timedelta(seconds=self._config.window_seconds)
+        try:
+            records = self._data.get_predictions(since=since)
+        except Exception as e:
+            logger.warning(f"DB poll failed: {e}")
+            return
+
+        with self._lock:
+            ref = self._ref_class_freq
+
+        metrics = compute_window_metrics(records, ref)
+
+        if metrics.psi is None:
+            if ref is None:
+                logger.warning("Reference distribution not yet loaded, skipping PSI.")
+            else:
+                logger.info(
+                    f"Window too small ({metrics.n} < {_MIN_SAMPLES}), PSI set to sentinel."
+                )
+        else:
+            logger.info(
+                f"Poll: n={metrics.n} PSI={metrics.psi:.4f} "
+                f"dist={[round(metrics.class_freqs[c], 3) for c in range(10)]}"
+            )
+
+        try:
+            annotated_count = self._data.get_annotated_count()
+        except Exception as e:
+            logger.warning(f"Annotated count poll failed: {e}")
+            annotated_count = 0
+
+        self._emitter.emit(metrics, annotated_count)
+
+        with self._lock:
+            self._last_poll_ts = time.time()
+
+    # ── Private helpers ────────────────────────────────────────────────────────
+
+    def _maybe_reload_reference(self) -> None:
+        try:
+            run_id = self._artifacts.get_production_run_id(
+                self._config.model_name, self._config.model_stage
+            )
+            with self._lock:
+                if run_id != self._current_run_id:
+                    logger.info(f"Model version changed: {self._current_run_id} → {run_id}")
+                    ref = self._load_reference(run_id)
+                    self._current_run_id = run_id
+                    self._ref_class_freq = ref
+        except ModelArtifactError as e:
+            logger.warning(f"MLflow unavailable, using cached reference: {e}")
+
+    def _load_reference(self, run_id: str) -> list[float] | None:
+        try:
+            data = self._artifacts.download_reference_distribution(run_id, self._artifact_dir)
+            freqs = data["prediction_class_frequencies"]
+            logger.info(f"Reference distribution loaded from run {run_id}: {freqs}")
+            return freqs
+        except Exception as e:
+            logger.warning(f"Failed to load reference distribution from run {run_id}: {e}")
+            return None
+
+
+# ── Background threads ─────────────────────────────────────────────────────────
+
+
+def _poll_loop(poller: DriftPoller, config: ExporterConfig) -> None:
     while True:
         try:
-            _poll()
+            poller.poll()
         except Exception as e:
             logger.error(f"Unexpected error in poll loop: {e}")
-        time.sleep(DRIFT_POLL_INTERVAL)
+        time.sleep(config.poll_interval)
 
 
-def _age_updater() -> None:
+def _age_updater(poller: DriftPoller, emitter: MetricsEmitter) -> None:
     """Continuously update the poll-age gauge so staleness is visible in Grafana."""
     while True:
-        with _lock:
-            ts = _last_poll_ts
-        age = time.time() - ts if ts > 0 else float("inf")
-        _poll_age.set(age)
+        age = poller.poll_age()
+        emitter.update_poll_age(age if age is not None else float("inf"))
         time.sleep(1)
 
 
-# ── FastAPI app ───────────────────────────────────────────────────
+# ── FastAPI app ────────────────────────────────────────────────────────────────
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    threading.Thread(target=_poll_loop, daemon=True).start()
-    threading.Thread(target=_age_updater, daemon=True).start()
+    config = ExporterConfig.from_env()
+    emitter = PrometheusEmitter()
+    artifact_dir = tempfile.mkdtemp(prefix="ml_exporter_")
+    poller = DriftPoller(
+        config=config,
+        data_controller=DriftDataController(),
+        artifact_controller=ModelArtifactController(),
+        emitter=emitter,
+        artifact_dir=artifact_dir,
+    )
+
+    app.state.poller = poller
+    app.state.emitter = emitter
+    app.state.config = config
+
+    threading.Thread(target=_poll_loop, args=(poller, config), daemon=True).start()
+    threading.Thread(target=_age_updater, args=(poller, emitter), daemon=True).start()
+
     logger.info(
-        f"ML exporter started — poll_interval={DRIFT_POLL_INTERVAL}s "
-        f"window={DRIFT_WINDOW_SECONDS}s model={MODEL_NAME}/{MODEL_STAGE}"
+        f"ML exporter started — poll_interval={config.poll_interval}s "
+        f"window={config.window_seconds}s model={config.model_name}/{config.model_stage}"
     )
     yield
     logger.info("ML exporter shutting down.")
@@ -217,25 +365,27 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="ML Exporter", version="1.0.0", lifespan=lifespan)
 
-# Mount prometheus_client's ASGI app at /metrics (no fastapi-instrumentator needed).
-app.mount("/metrics", make_asgi_app())
-
 
 @app.get("/health")
-async def health():
-    with _lock:
-        run_id = _current_run_id
-        ref_loaded = _ref_class_freq is not None
-        ts = _last_poll_ts
-    age = time.time() - ts if ts > 0 else None
+async def health(request: Request):
+    poller: DriftPoller = request.app.state.poller
+    config: ExporterConfig = request.app.state.config
+    age = poller.poll_age()
     return JSONResponse(
         status_code=200,
         content={
             "status": "healthy",
-            "model_run_id": run_id,
-            "reference_loaded": ref_loaded,
+            "model_run_id": poller.current_run_id(),
+            "reference_loaded": poller.reference_loaded(),
             "last_poll_age_seconds": round(age, 1) if age is not None else None,
-            "poll_interval": DRIFT_POLL_INTERVAL,
-            "window_seconds": DRIFT_WINDOW_SECONDS,
+            "poll_interval": config.poll_interval,
+            "window_seconds": config.window_seconds,
         },
     )
+
+
+@app.get("/metrics")
+async def metrics_endpoint(request: Request):
+    emitter: PrometheusEmitter = request.app.state.emitter
+    data, content_type = emitter.generate_metrics()
+    return Response(content=data, media_type=content_type)

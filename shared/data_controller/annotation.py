@@ -6,7 +6,12 @@ from __future__ import annotations
 from uuid import UUID
 
 from shared.config import require_env
-from shared.data_controller._base import _WRITE_LABEL, DataControllerError, _DataControllerBase
+from shared.data_controller._base import (
+    _RESET_CANDIDATE,
+    _WRITE_LABEL,
+    DataControllerError,
+    _DataControllerBase,
+)
 
 # Return the UUIDs of candidate predictions, randomly ordered so each job run
 # annotates a different subset.  Labels are resolved by the annotation job from
@@ -47,7 +52,10 @@ class AnnotationDataController(_DataControllerBase):
             raise DataControllerError(f"Failed to fetch candidates: {exc}") from exc
 
     def write_label(self, uuid: UUID, label: int) -> None:
-        """Write a ground truth label and advance annotation_status to 'annotated'."""
+        """Write a ground truth label and advance annotation_status to 'annotated'.
+
+        Only updates predictions that are currently in 'candidate' status.
+        """
         try:
             conn = self._connect()
             with conn.cursor() as cur:
@@ -60,4 +68,24 @@ class AnnotationDataController(_DataControllerBase):
                 self._conn = None
             raise DataControllerError(
                 f"Failed to write label for '{uuid}': {exc}"
+            ) from exc
+
+    def reset_candidate(self, uuid: UUID) -> None:
+        """Reset a candidate prediction back to 'none' so it can be re-sampled.
+
+        Used when the annotation oracle has no label for this UUID.
+        Only affects predictions currently in 'candidate' status.
+        """
+        try:
+            conn = self._connect()
+            with conn.cursor() as cur:
+                cur.execute(_RESET_CANDIDATE, (uuid,))
+            conn.commit()
+        except Exception as exc:
+            try:
+                self._conn.rollback()
+            except Exception:
+                self._conn = None
+            raise DataControllerError(
+                f"Failed to reset candidate '{uuid}': {exc}"
             ) from exc

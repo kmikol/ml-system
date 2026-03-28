@@ -71,7 +71,7 @@ def seed_split(
         )
 
     count = 0
-    for i, (img, label, uuid_str) in enumerate(zip(images, labels, uuids)):
+    for i, (img, label, uuid_str) in enumerate(zip(images, labels, uuids, strict=True)):
         uuid = UUID(str(uuid_str))
         minio_path = f"{date_prefix}/{uuid}.npy"
         ctrl.store_sample(

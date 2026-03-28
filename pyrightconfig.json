@@ -1,0 +1,19 @@
+{
+  "include": [
+    "serving",
+    "annotation",
+    "sampling",
+    "monitoring",
+    "shared",
+    "training",
+    "scripts"
+  ],
+  "exclude": [
+    "**/__pycache__",
+    "**/tests"
+  ],
+  "pythonVersion": "3.11",
+  "typeCheckingMode": "standard",
+  "reportMissingImports": false,
+  "reportMissingModuleSource": false
+}

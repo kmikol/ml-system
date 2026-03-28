@@ -91,7 +91,13 @@ class FakeDataController:
 
     def write_label(self, uuid: UUID, label: int) -> None:
         for r in self._records:
-            if r.uuid == uuid:
+            if r.uuid == uuid and r.annotation_status == "candidate":
                 r.annotated_label = label
                 r.annotation_status = "annotated"
+                return
+
+    def reset_candidate(self, uuid: UUID) -> None:
+        for r in self._records:
+            if r.uuid == uuid and r.annotation_status == "candidate":
+                r.annotation_status = "none"
                 return

@@ -6,6 +6,7 @@ Base class, shared SQL constants, and error type for all data controllers.
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from shared.schemas.predict_record import PredictRecord
 
@@ -104,22 +105,31 @@ WHERE uuid = %s AND annotation_status = 'none';
 """
 
 _MARK_CANDIDATES_BATCH = """
-UPDATE predictions
-SET annotation_status = 'candidate'
-WHERE uuid IN (
+WITH candidates AS (
     SELECT uuid
     FROM predictions
     WHERE annotation_status = 'none'
     ORDER BY RANDOM()
     LIMIT %s
+    FOR UPDATE SKIP LOCKED
 )
-RETURNING uuid;
+UPDATE predictions
+SET annotation_status = 'candidate'
+FROM candidates
+WHERE predictions.uuid = candidates.uuid
+RETURNING predictions.uuid;
 """
 
 _WRITE_LABEL = """
 UPDATE predictions
 SET annotated_label = %s, annotation_status = 'annotated'
-WHERE uuid = %s;
+WHERE uuid = %s AND annotation_status = 'candidate';
+"""
+
+_RESET_CANDIDATE = """
+UPDATE predictions
+SET annotation_status = 'none'
+WHERE uuid = %s AND annotation_status = 'candidate';
 """
 
 _COUNT_LABELS = """
@@ -174,7 +184,7 @@ class _DataControllerBase:
         import psycopg2  # lazy — keeps psycopg2 out of import-time for non-users
         import psycopg2.extras  # extras is a submodule; must be imported explicitly
         self._psycopg2 = psycopg2
-        self._conn = None
+        self._conn: Any = None
         self._dsn = dsn
         self._ensure_schema()
 
@@ -183,7 +193,7 @@ class _DataControllerBase:
             self._conn = self._psycopg2.connect(self._dsn)
             # Register UUID ↔ uuid.UUID adaptation for this connection so that
             # Python UUID objects are sent as native Postgres UUID values.
-            self._psycopg2.extras.register_uuid(self._conn)
+            self._psycopg2.extras.register_uuid(conn_or_curs=self._conn)
         return self._conn
 
     def _ensure_schema(self) -> None:

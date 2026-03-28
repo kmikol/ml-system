@@ -76,12 +76,16 @@ class FakeArtifactController:
 
 
 class FakeDriftDataController:
-    def __init__(self, records: list[PredictRecord] | None = None, annotated_count: int = 0) -> None:
+    def __init__(
+        self, records: list[PredictRecord] | None = None, annotated_count: int = 0
+    ) -> None:
         self.records = records or []
         self.annotated_count = annotated_count
         self.fail_get_predictions = False
 
-    def get_predictions(self, since: datetime, until: datetime | None = None, model_version: str | None = None) -> list[PredictRecord]:
+    def get_predictions(
+        self, since: datetime, until: datetime | None = None, model_version: str | None = None
+    ) -> list[PredictRecord]:
         if self.fail_get_predictions:
             raise Exception("DB unavailable")
         return self.records
@@ -186,10 +190,7 @@ class TestComputeWindowMetrics:
         assert math.isfinite(m.psi)
 
     def test_class_counts_and_freqs_match_records(self):
-        records = (
-            [_make_record(prediction=0)] * 3
-            + [_make_record(prediction=1)] * 7
-        )
+        records = [_make_record(prediction=0)] * 3 + [_make_record(prediction=1)] * 7
         m = compute_window_metrics(records, reference=None)
         assert m.n == 10
         assert m.class_counts[0] == 3
@@ -293,9 +294,7 @@ class TestDriftPollerPoll:
     def test_emits_with_psi_when_reference_loaded(self):
         reference = [0.1] * 10
         records = [_make_record(prediction=c) for c in range(10) for _ in range(3)]
-        artifacts = FakeArtifactController(
-            reference={"prediction_class_frequencies": reference}
-        )
+        artifacts = FakeArtifactController(reference={"prediction_class_frequencies": reference})
         data = FakeDriftDataController(records=records)
         poller, em = _make_poller(data=data, artifacts=artifacts)
         poller.poll()
@@ -317,9 +316,7 @@ class TestDriftPollerPoll:
 
     def test_uses_cached_reference_when_mlflow_unavailable(self):
         reference = [0.1] * 10
-        artifacts = FakeArtifactController(
-            reference={"prediction_class_frequencies": reference}
-        )
+        artifacts = FakeArtifactController(reference={"prediction_class_frequencies": reference})
         records = [_make_record(prediction=c) for c in range(10) for _ in range(3)]
         data = FakeDriftDataController(records=records)
         poller, em = _make_poller(data=data, artifacts=artifacts)

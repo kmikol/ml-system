@@ -40,8 +40,7 @@ class ModelArtifactController:
             return
 
         raise ModelArtifactError(
-            f"Unsupported MODEL_ARTIFACT_BACKEND='{backend_name}'. "
-            "Supported backends: mlflow"
+            f"Unsupported MODEL_ARTIFACT_BACKEND='{backend_name}'. Supported backends: mlflow"
         )
 
     def start_run(self, experiment_name: str) -> AbstractContextManager[str]:
@@ -89,11 +88,14 @@ class ModelArtifactController:
     def download_artifacts(self, run_id: str, artifact_path: str, local_dir: str) -> str:
         return self._backend.download_artifacts(run_id, artifact_path, local_dir)
 
-    def download_serving_bundle(self, run_id: str, local_dir: str) -> tuple[str, str, dict[str, Any] | None]:
+    def download_serving_bundle(
+        self, run_id: str, local_dir: str
+    ) -> tuple[str, str, dict[str, Any] | None]:
         return self._backend.download_serving_bundle(run_id, local_dir)
 
     def download_reference_distribution(self, run_id: str, local_dir: str) -> dict[str, Any]:
         return self._backend.download_reference_distribution(run_id, local_dir)
+
 
 __all__ = [
     "ModelArtifactError",

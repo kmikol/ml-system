@@ -136,7 +136,9 @@ class MLflowModelArtifactController:
                 json.dump(feature_schema, f, indent=2)
             self.log_artifact(run_id, schema_path)
 
-    def download_serving_bundle(self, run_id: str, local_dir: str) -> tuple[str, str, dict[str, Any] | None]:
+    def download_serving_bundle(
+        self, run_id: str, local_dir: str
+    ) -> tuple[str, str, dict[str, Any] | None]:
         """Return local classifier path, embedder path, and optional class Gaussians payload."""
         onnx_dir = self.download_artifacts(run_id, _ONNX_ROOT, local_dir)
         classifier_path = self._resolve_onnx_path(onnx_dir, _CLASSIFIER_DIR)

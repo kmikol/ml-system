@@ -74,6 +74,7 @@ class TestLoadOracle:
 
 # Helpers for building mock controllers used in main() tests.
 
+
 def _make_ctrl(candidates: list, **kwargs) -> MagicMock:
     """Return a mock AnnotationDataController with given candidate UUIDs."""
     ctrl = MagicMock()

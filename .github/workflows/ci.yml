@@ -5,11 +5,13 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
 
 jobs:
 
   lint:
     name: Lint
+    if: github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -18,9 +20,11 @@ jobs:
           python-version: "3.11"
       - run: pip install "ruff>=0.4.0"
       - run: ruff check .
+      - run: ruff format --check .
 
   typecheck:
     name: Type check
+    if: github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -43,6 +47,7 @@ jobs:
 
   unit-tests:
     name: Unit tests
+    if: github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -61,6 +66,8 @@ jobs:
 
   integration-tests:
     name: Integration tests
+    needs: [lint, typecheck, unit-tests]
+    if: github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

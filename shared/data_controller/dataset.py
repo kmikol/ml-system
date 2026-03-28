@@ -100,9 +100,7 @@ class DatasetController(_DataControllerBase):
                 self._conn.rollback()
             except Exception:
                 self._conn = None
-            raise DataControllerError(
-                f"Failed to store sample '{uuid}': {exc}"
-            ) from exc
+            raise DataControllerError(f"Failed to store sample '{uuid}': {exc}") from exc
 
     # ── Data retrieval ────────────────────────────────────────────────────────
 
@@ -115,9 +113,7 @@ class DatasetController(_DataControllerBase):
                 row = cur.fetchone()
             return row[0] if row else None
         except Exception as exc:
-            raise DataControllerError(
-                f"Failed to query latest version: {exc}"
-            ) from exc
+            raise DataControllerError(f"Failed to query latest version: {exc}") from exc
 
     def get_dataset_split(self, version_id: str, split: str) -> list[dict]:
         """Fetch all samples for a version+split, loading images from MinIO.

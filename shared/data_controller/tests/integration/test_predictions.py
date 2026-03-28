@@ -275,10 +275,7 @@ class TestFullWorkflow:
         marked = SamplingDataController().select_and_mark_candidates(limit=100)
         assert record.uuid in marked
 
-        after_mark = next(
-            r for r in drift.get_predictions(since=_EPOCH)
-            if r.uuid == record.uuid
-        )
+        after_mark = next(r for r in drift.get_predictions(since=_EPOCH) if r.uuid == record.uuid)
         assert after_mark.annotation_status == "candidate"
 
         # 4. Annotation fetches the candidate UUID and writes a label
@@ -301,17 +298,25 @@ class TestFullWorkflow:
 
         # Sampling marks it as a candidate
         SamplingDataController().select_and_mark_candidates(limit=100)
-        assert next(
-            r for r in DriftDataController().get_predictions(since=_EPOCH)
-            if r.uuid == record.uuid
-        ).annotation_status == "candidate"
+        assert (
+            next(
+                r
+                for r in DriftDataController().get_predictions(since=_EPOCH)
+                if r.uuid == record.uuid
+            ).annotation_status
+            == "candidate"
+        )
 
         # Oracle miss: annotation job resets it
         AnnotationDataController().reset_candidate(record.uuid)
-        assert next(
-            r for r in DriftDataController().get_predictions(since=_EPOCH)
-            if r.uuid == record.uuid
-        ).annotation_status == "none"
+        assert (
+            next(
+                r
+                for r in DriftDataController().get_predictions(since=_EPOCH)
+                if r.uuid == record.uuid
+            ).annotation_status
+            == "none"
+        )
 
         # A subsequent sampling run picks it up again
         marked_again = SamplingDataController().select_and_mark_candidates(limit=100)

@@ -115,7 +115,9 @@ def compute_reference_distributions(model, train_samples):
     for cls in range(NUM_CLASSES):
         mask = labels == cls
         cls_emb = embeddings_np[mask]
-        if len(cls_emb) == 0:
+        if len(cls_emb) < 2:
+            # np.cov requires at least 2 observations (ddof=1); skip classes with
+            # insufficient samples rather than producing a NaN precision matrix.
             continue
         mean = cls_emb.mean(axis=0)
         cov = np.cov(cls_emb.T) + np.eye(EMBEDDING_DIM) * 1e-6
@@ -147,9 +149,7 @@ def main():
     dataset_ctrl = DatasetController()
     version_id = dataset_ctrl.get_latest_version()
     if version_id is None:
-        raise RuntimeError(
-            "No dataset version found. Run scripts/seed_dataset.py before training."
-        )
+        raise RuntimeError("No dataset version found. Run scripts/seed_dataset.py before training.")
     logger.info(f"Using dataset version: {version_id}")
     train_samples = dataset_ctrl.get_dataset_split(version_id, "train")
     val_samples = dataset_ctrl.get_dataset_split(version_id, "val")

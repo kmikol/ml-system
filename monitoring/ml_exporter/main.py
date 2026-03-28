@@ -167,8 +167,7 @@ class PrometheusEmitter:
         )
         self._psi = Gauge(
             "drift_psi_class_distribution",
-            "PSI of prediction class distribution vs. MLflow reference "
-            "(-1 = insufficient samples)",
+            "PSI of prediction class distribution vs. MLflow reference (-1 = insufficient samples)",
             registry=self._registry,
         )
         self._poll_age = Gauge(

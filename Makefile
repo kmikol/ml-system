@@ -464,8 +464,9 @@ typecheck: ## Run mypy static type checker
 	python -m mypy serving annotation sampling monitoring/ml_exporter shared \
 		--ignore-missing-imports --no-strict-optional
 
-lint: ## Check code with ruff (no changes)
+lint: ## Check code style with ruff (linting + formatting, no changes)
 	ruff check .
+	ruff format --check .
 
 lint.fix: ## Auto-fix ruff lint issues and format code
 	ruff check --fix .
@@ -474,7 +475,9 @@ lint.fix: ## Auto-fix ruff lint issues and format code
 format: ## Format code with ruff
 	ruff format .
 
-test: ## Run all tests (unit + integration) in Docker
+test: ## Run lint, type checking, and all tests (unit + integration) in Docker
+	$(MAKE) lint
+	$(MAKE) typecheck
 	$(TEST_COMPOSE) run --rm test; \
 	EXIT=$$?; \
 	$(TEST_COMPOSE) down -v; \

@@ -58,14 +58,22 @@ def _load_pools() -> tuple[list[bytes], list[bytes]]:
     uuids_path = os.path.join(_DATA_DIR, "uuids.npy")
     try:
         images = np.load(images_path)  # shape (N, 14, 14), float32
-        uuids = np.load(uuids_path)    # shape (N,) str
+        uuids = np.load(uuids_path)  # shape (N,) str
     except FileNotFoundError as e:
         print(f"ERROR: {e}. Run 'make data.prepare' first.", file=sys.stderr)
         sys.exit(1)
-    print(f"Loaded {len(images):,} images. Pre-serializing {_POOL_SIZE:,} payloads each...", flush=True)
+    print(
+        f"Loaded {len(images):,} images. Pre-serializing {_POOL_SIZE:,} payloads each...",
+        flush=True,
+    )
     idx = np.random.randint(0, len(images), size=_POOL_SIZE)
-    normal = [json.dumps({"image": images[i].tolist(), "uuid": str(uuids[i])}).encode() for i in idx]
-    inverted = [json.dumps({"image": (1.0 - images[i]).tolist(), "uuid": str(uuids[i])}).encode() for i in idx]
+    normal = [
+        json.dumps({"image": images[i].tolist(), "uuid": str(uuids[i])}).encode() for i in idx
+    ]
+    inverted = [
+        json.dumps({"image": (1.0 - images[i]).tolist(), "uuid": str(uuids[i])}).encode()
+        for i in idx
+    ]
     return normal, inverted
 
 
@@ -115,7 +123,9 @@ def _send(url: str, inv_prob: float) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--rate", type=float, default=5.0, help="Req/s (default: 5)")
-    parser.add_argument("--duration", type=float, default=120.0, help="Total seconds (default: 120)")
+    parser.add_argument(
+        "--duration", type=float, default=120.0, help="Total seconds (default: 120)"
+    )
     parser.add_argument(
         "--inversion-probability",
         type=float,
@@ -140,7 +150,9 @@ def main() -> None:
     print(f"Duration          : {args.duration}s")
     print(f"Total             : ~{total_requests:.0f} requests")
     print(f"Inversion target  : {args.inversion_probability * 100:.0f}%")
-    print(f"Inversion ramp    : {args.ramp}s  (0% → {args.inversion_probability * 100:.0f}% over ramp period)")
+    print(
+        f"Inversion ramp    : {args.ramp}s  (0% → {args.inversion_probability * 100:.0f}% over ramp period)"
+    )
     print(f"Target            : {args.url}")
     print("Ctrl-C to stop early\n")
 

@@ -147,11 +147,18 @@ WHERE annotation_status = 'annotated'
   AND uuid NOT IN (SELECT uuid FROM dataset_samples);
 """
 
+
 def _row_to_record(row: tuple) -> PredictRecord:
     (
-        uuid, timestamp, model_version,
-        prediction, confidence, prediction_distribution, embedding,
-        annotation_status, annotated_label,
+        uuid,
+        timestamp,
+        model_version,
+        prediction,
+        confidence,
+        prediction_distribution,
+        embedding,
+        annotation_status,
+        annotated_label,
     ) = row
     return PredictRecord(
         uuid=uuid,
@@ -169,6 +176,7 @@ def _row_to_record(row: tuple) -> PredictRecord:
 
 # ── Base ──────────────────────────────────────────────────────────────────────
 
+
 class _DataControllerBase:
     """Postgres connection lifecycle and schema creation.
 
@@ -183,6 +191,7 @@ class _DataControllerBase:
     def __init__(self, dsn: str) -> None:
         import psycopg2  # lazy — keeps psycopg2 out of import-time for non-users
         import psycopg2.extras  # extras is a submodule; must be imported explicitly
+
         self._psycopg2 = psycopg2
         self._conn: Any = None
         self._dsn = dsn
@@ -204,6 +213,4 @@ class _DataControllerBase:
                 cur.execute(_CREATE_SCHEMA)
             conn.commit()
         except Exception as exc:
-            raise DataControllerError(
-                f"Failed to create database schema: {exc}"
-            ) from exc
+            raise DataControllerError(f"Failed to create database schema: {exc}") from exc

@@ -28,3 +28,8 @@ os.environ.setdefault("TRAINING_MAX_EPOCHS", "2")
 os.environ.setdefault("TRAINING_SEED", "42")
 os.environ.setdefault("TRAINING_BATCH_SIZE", "32")
 os.environ.setdefault("TRAINING_LR", "0.001")
+
+# monitoring/ml_exporter/main.py reads these at module level
+os.environ.setdefault("DRIFT_POLL_INTERVAL", "5")
+os.environ.setdefault("DRIFT_WINDOW_SECONDS", "300")
+os.environ.setdefault("DRIFT_MIN_SAMPLES", "30")

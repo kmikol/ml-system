@@ -34,6 +34,7 @@ def _make_config(**overrides: Any) -> ExporterConfig:
         "model_stage": "Production",
         "poll_interval": 60,
         "window_seconds": 3600,
+        "min_samples": 30,
     }
     defaults.update(overrides)
     return ExporterConfig(**defaults)
@@ -344,3 +345,67 @@ class TestDriftPollerPoll:
         metrics, _ = em.emitted[0]
         assert metrics.n == 0
         assert all(metrics.class_counts[c] == 0 for c in range(10))
+
+
+class TestConfigurableMinSamples:
+    def test_psi_none_below_custom_min_samples(self):
+        """PSI should be None when sample count is below the configured min_samples."""
+        # Create records with 40 samples, but set min_samples to 50
+        records = [_make_record(prediction=c) for c in range(10) for _ in range(4)]  # 40 records
+        reference = [0.1] * 10
+        config = _make_config(min_samples=50)
+        artifacts = FakeArtifactController(reference={"prediction_class_frequencies": reference})
+        data = FakeDriftDataController(records=records)
+        poller, em = _make_poller(config=config, data=data, artifacts=artifacts)
+
+        poller.poll()
+        metrics, _ = em.emitted[0]
+        assert metrics.n == 40
+        assert metrics.psi is None  # Should be None because 40 < 50
+
+    def test_psi_computed_at_custom_min_samples(self):
+        """PSI should be computed when sample count meets the configured min_samples."""
+        # Create records with 50 samples, and set min_samples to 50
+        records = [_make_record(prediction=c) for c in range(10) for _ in range(5)]  # 50 records
+        reference = [0.1] * 10
+        config = _make_config(min_samples=50)
+        artifacts = FakeArtifactController(reference={"prediction_class_frequencies": reference})
+        data = FakeDriftDataController(records=records)
+        poller, em = _make_poller(config=config, data=data, artifacts=artifacts)
+
+        poller.poll()
+        metrics, _ = em.emitted[0]
+        assert metrics.n == 50
+        assert metrics.psi is not None  # Should be computed because 50 >= 50
+        assert math.isfinite(metrics.psi)
+
+    def test_psi_computed_above_custom_min_samples(self):
+        """PSI should be computed when sample count exceeds the configured min_samples."""
+        # Create records with 60 samples, and set min_samples to 50
+        records = [_make_record(prediction=c) for c in range(10) for _ in range(6)]  # 60 records
+        reference = [0.1] * 10
+        config = _make_config(min_samples=50)
+        artifacts = FakeArtifactController(reference={"prediction_class_frequencies": reference})
+        data = FakeDriftDataController(records=records)
+        poller, em = _make_poller(config=config, data=data, artifacts=artifacts)
+
+        poller.poll()
+        metrics, _ = em.emitted[0]
+        assert metrics.n == 60
+        assert metrics.psi is not None  # Should be computed because 60 > 50
+        assert math.isfinite(metrics.psi)
+
+    def test_min_samples_of_one(self):
+        """PSI should be computed with min_samples=1."""
+        records = [_make_record(prediction=0)]  # 1 record
+        reference = [0.1] * 10
+        config = _make_config(min_samples=1)
+        artifacts = FakeArtifactController(reference={"prediction_class_frequencies": reference})
+        data = FakeDriftDataController(records=records)
+        poller, em = _make_poller(config=config, data=data, artifacts=artifacts)
+
+        poller.poll()
+        metrics, _ = em.emitted[0]
+        assert metrics.n == 1
+        assert metrics.psi is not None  # Should be computed because 1 >= 1
+        assert math.isfinite(metrics.psi)

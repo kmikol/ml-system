@@ -49,17 +49,20 @@ class TestExporterConfigFromEnv:
         monkeypatch.setenv("MODEL_STAGE", "Staging")
         monkeypatch.setenv("DRIFT_POLL_INTERVAL", "30")
         monkeypatch.setenv("DRIFT_WINDOW_SECONDS", "7200")
+        monkeypatch.setenv("DRIFT_MIN_SAMPLES", "50")
         cfg = ExporterConfig.from_env()
         assert cfg.model_name == "my-model"
         assert cfg.model_stage == "Staging"
         assert cfg.poll_interval == 30
         assert cfg.window_seconds == 7200
+        assert cfg.min_samples == 50
 
     def test_exits_when_env_var_missing(self, monkeypatch):
         monkeypatch.delenv("DRIFT_POLL_INTERVAL", raising=False)
         monkeypatch.setenv("MODEL_NAME", "m")
         monkeypatch.setenv("MODEL_STAGE", "Production")
         monkeypatch.setenv("DRIFT_WINDOW_SECONDS", "3600")
+        monkeypatch.setenv("DRIFT_MIN_SAMPLES", "30")
         with pytest.raises(SystemExit):
             ExporterConfig.from_env()
 
@@ -143,6 +146,7 @@ def test_client_with_state(monkeypatch):
     """
     monkeypatch.setenv("DRIFT_POLL_INTERVAL", "60")
     monkeypatch.setenv("DRIFT_WINDOW_SECONDS", "3600")
+    monkeypatch.setenv("DRIFT_MIN_SAMPLES", "30")
     # MODEL_NAME / MODEL_STAGE / MLFLOW_TRACKING_URI already set by conftest.py
 
     mock_poller = MagicMock()
@@ -156,6 +160,7 @@ def test_client_with_state(monkeypatch):
         model_stage="Production",
         poll_interval=60,
         window_seconds=3600,
+        min_samples=30,
     )
 
     with (

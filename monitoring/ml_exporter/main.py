@@ -59,6 +59,7 @@ class ExporterConfig:
     model_stage: str
     poll_interval: int
     window_seconds: int
+    min_samples: int
 
     @classmethod
     def from_env(cls) -> ExporterConfig:
@@ -67,6 +68,7 @@ class ExporterConfig:
             model_stage=require_env("MODEL_STAGE"),
             poll_interval=int(require_env("DRIFT_POLL_INTERVAL")),
             window_seconds=int(require_env("DRIFT_WINDOW_SECONDS")),
+            min_samples=int(require_env("DRIFT_MIN_SAMPLES")),
         )
 
 
@@ -102,6 +104,7 @@ def compute_psi(actual: list[float], reference: list[float]) -> float:
 def compute_window_metrics(
     records: list[PredictRecord],
     reference: list[float] | None,
+    min_samples: int = 30,
 ) -> WindowMetrics:
     """Pure function: compute all window metrics from records and optional reference."""
     n = len(records)
@@ -116,7 +119,7 @@ def compute_window_metrics(
     conf_mean = sum(r.confidence for r in records) / n if n > 0 else 0.0
 
     psi: float | None = None
-    if reference is not None and n >= _MIN_SAMPLES:
+    if reference is not None and n >= min_samples:
         actual_freq = [freqs[c] for c in range(10)]
         psi = compute_psi(actual_freq, reference)
 
@@ -258,14 +261,14 @@ class DriftPoller:
         with self._lock:
             ref = self._ref_class_freq
 
-        metrics = compute_window_metrics(records, ref)
+        metrics = compute_window_metrics(records, ref, self._config.min_samples)
 
         if metrics.psi is None:
             if ref is None:
                 logger.warning("Reference distribution not yet loaded, skipping PSI.")
             else:
                 logger.info(
-                    f"Window too small ({metrics.n} < {_MIN_SAMPLES}), PSI set to sentinel."
+                    f"Window too small ({metrics.n} < {self._config.min_samples}), PSI set to sentinel."
                 )
         else:
             logger.info(

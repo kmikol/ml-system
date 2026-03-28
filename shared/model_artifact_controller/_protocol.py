@@ -77,7 +77,9 @@ class ModelArtifactController(Protocol):
         """Log canonical training outputs used by serving and drift callers."""
         ...
 
-    def download_serving_bundle(self, run_id: str, local_dir: str) -> tuple[str, str, dict[str, Any] | None]:
+    def download_serving_bundle(
+        self, run_id: str, local_dir: str
+    ) -> tuple[str, str, dict[str, Any] | None]:
         """Return classifier path, embedder path, and optional class Gaussians payload."""
         ...
 

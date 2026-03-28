@@ -62,8 +62,7 @@ def main():
         from torchvision.datasets import MNIST
     except ImportError:
         raise SystemExit(
-            "torchvision is required to download MNIST.\n"
-            "Install it with: pip install torchvision"
+            "torchvision is required to download MNIST.\nInstall it with: pip install torchvision"
         ) from None
 
     raw_dir = os.path.join(DATA_DIR, "raw")
@@ -87,8 +86,8 @@ def main():
     rng = np.random.default_rng(SEED)
     idx = rng.permutation(len(all_images))
     n_v0 = int(len(idx) * V0_FRACTION)
-    v0_idx = idx[:n_v0]          # 600 samples
-    remaining_idx = idx[n_v0:]   # 59,400 samples
+    v0_idx = idx[:n_v0]  # 600 samples
+    remaining_idx = idx[n_v0:]  # 59,400 samples
 
     # ── Remaining pool ────────────────────────────────────────────
     print(f"Saving remaining pool ({len(remaining_idx)} samples)...")
@@ -113,8 +112,12 @@ def main():
 
     splits = {
         "train": (v0_images[:train_end], v0_labels[:train_end], v0_uuids[:train_end]),
-        "val":   (v0_images[train_end:val_end], v0_labels[train_end:val_end], v0_uuids[train_end:val_end]),
-        "test":  (v0_images[val_end:], v0_labels[val_end:], v0_uuids[val_end:]),
+        "val": (
+            v0_images[train_end:val_end],
+            v0_labels[train_end:val_end],
+            v0_uuids[train_end:val_end],
+        ),
+        "test": (v0_images[val_end:], v0_labels[val_end:], v0_uuids[val_end:]),
     }
 
     print(f"\nPartitioning v0 ({n_v0} samples, 80/10/10 split)...")

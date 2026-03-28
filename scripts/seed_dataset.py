@@ -62,7 +62,7 @@ def seed_split(
 
     images = np.load(images_path)  # (N, 14, 14) float32
     labels = np.load(labels_path)  # (N,) int64
-    uuids = np.load(uuids_path)    # (N,) str — assigned at prepare time
+    uuids = np.load(uuids_path)  # (N,) str — assigned at prepare time
 
     if not (len(images) == len(labels) == len(uuids)):
         raise ValueError(

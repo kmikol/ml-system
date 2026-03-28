@@ -55,6 +55,5 @@ def setup_logging(service: str) -> None:
             )
         except ImportError:
             logging.getLogger(__name__).warning(
-                "LOKI_URL is set but 'python-logging-loki' is not installed; "
-                "Loki handler skipped."
+                "LOKI_URL is set but 'python-logging-loki' is not installed; Loki handler skipped."
             )

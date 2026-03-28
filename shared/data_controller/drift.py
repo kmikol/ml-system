@@ -60,6 +60,4 @@ class DriftDataController(_DataControllerBase):
                 cur.execute(_SELECT_LABELED, (since,))
                 return [_row_to_record(row) for row in cur.fetchall()]
         except Exception as exc:
-            raise DataControllerError(
-                f"Failed to query labeled predictions: {exc}"
-            ) from exc
+            raise DataControllerError(f"Failed to query labeled predictions: {exc}") from exc

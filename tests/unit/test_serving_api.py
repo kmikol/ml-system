@@ -46,7 +46,8 @@ def client():
     """
     with (
         patch.object(_serving.model_manager, "load_from_mlflow", return_value=False),
-        patch("serving.main.asyncio.sleep", new_callable=AsyncMock),TestClient(_serving.app) as c
+        patch("serving.main.asyncio.sleep", new_callable=AsyncMock),
+        TestClient(_serving.app) as c,
     ):
         yield c
 

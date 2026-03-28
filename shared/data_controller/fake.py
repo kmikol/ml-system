@@ -41,10 +41,7 @@ class FakeDataController:
         return result
 
     def get_labeled_predictions(self, since: datetime) -> list[PredictRecord]:
-        return [
-            r for r in self._records
-            if r.annotated_label is not None and r.timestamp >= since
-        ]
+        return [r for r in self._records if r.annotated_label is not None and r.timestamp >= since]
 
     def get_annotated_count(self) -> int:
         """Return annotated predictions count (simulates _COUNT_ANNOTATED query).
@@ -52,10 +49,7 @@ class FakeDataController:
         In-memory approximation: counts all annotated records, since the fake
         has no concept of dataset_samples membership.
         """
-        return sum(
-            1 for r in self._records
-            if r.annotation_status == "annotated"
-        )
+        return sum(1 for r in self._records if r.annotation_status == "annotated")
 
     # ── SamplingDataController surface ────────────────────────────────────────
 

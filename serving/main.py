@@ -68,6 +68,7 @@ _mahalanobis_histogram = Histogram(
     buckets=[20, 40, 60, 70, 80, 90, 100, 120, 150, 200, 500],
 )
 
+
 class ModelManager:
     def __init__(self):
         self.classifier_session: ort.InferenceSession | None = None
@@ -90,8 +91,8 @@ class ModelManager:
 
         logger.info(f"Downloading artifacts from run {run_id}...")
         try:
-            classifier_path, embedder_path, raw_gaussians = self._controller.download_serving_bundle(
-                run_id, self._artifact_dir
+            classifier_path, embedder_path, raw_gaussians = (
+                self._controller.download_serving_bundle(run_id, self._artifact_dir)
             )
         except ModelArtifactError as e:
             logger.error(str(e))
@@ -118,7 +119,9 @@ class ModelManager:
                 }
                 logger.info("class_gaussians loaded for Mahalanobis scoring.")
             except Exception as e:
-                logger.warning(f"class_gaussians payload invalid, Mahalanobis scoring disabled: {e}")
+                logger.warning(
+                    f"class_gaussians payload invalid, Mahalanobis scoring disabled: {e}"
+                )
         else:
             logger.info("class_gaussians unavailable, Mahalanobis scoring disabled.")
 
@@ -216,7 +219,9 @@ async def predict(request: PredictRequest):
     features_array = np.array([np.array(request.image).flatten()], dtype=np.float32)
     result = model_manager.predict(features_array)
     _prediction_class_counter.labels(class_label=str(result["prediction"])).inc()
-    _confidence_histogram.labels(class_label=str(result["prediction"])).observe(result["confidence"])
+    _confidence_histogram.labels(class_label=str(result["prediction"])).observe(
+        result["confidence"]
+    )
     gaussians = model_manager.class_gaussians
     if gaussians is not None:
         try:

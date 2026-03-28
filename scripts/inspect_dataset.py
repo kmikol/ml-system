@@ -26,7 +26,9 @@ from shared.data_controller.dataset import DatasetController  # noqa: E402
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--split", default="train", choices=["train", "val", "test"])
-    parser.add_argument("--out", default=None, help="Save path (e.g. grid.png). Shows interactively if omitted.")
+    parser.add_argument(
+        "--out", default=None, help="Save path (e.g. grid.png). Shows interactively if omitted."
+    )
     args = parser.parse_args()
 
     print(f"Fetching {args.split} samples from DatasetController...")
@@ -53,7 +55,7 @@ def main():
         ax.axis("off")
 
     # Hide any unused axes if fewer than 16 samples
-    for ax in list(axes.flat)[len(chosen):]:
+    for ax in list(axes.flat)[len(chosen) :]:
         ax.axis("off")
 
     plt.tight_layout()

@@ -22,3 +22,9 @@ os.environ.setdefault("SERVING_SIMULATED_LATENCY_MS", "0")
 # ModelArtifactController reads this at construction time (module-level in serving/main.py).
 # A fake value is fine — tests patch load_from_mlflow before any real MLflow call is made.
 os.environ.setdefault("MLFLOW_TRACKING_URI", "http://localhost:5000")
+
+# training/main.py reads these at module level — required before any import of that module.
+os.environ.setdefault("TRAINING_MAX_EPOCHS", "2")
+os.environ.setdefault("TRAINING_SEED", "42")
+os.environ.setdefault("TRAINING_BATCH_SIZE", "32")
+os.environ.setdefault("TRAINING_LR", "0.001")

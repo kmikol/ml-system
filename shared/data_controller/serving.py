@@ -27,18 +27,14 @@ class ServingDataController(_DataControllerBase):
         self._failures = 0
         dsn = os.getenv("DATA_CONTROLLER_DB_URL", "")
         if not dsn:
-            logger.warning(
-                "DATA_CONTROLLER_DB_URL not set, predictions will not be persisted"
-            )
+            logger.warning("DATA_CONTROLLER_DB_URL not set, predictions will not be persisted")
             return
         try:
             super().__init__(dsn)
             self._available = True
             logger.info("Data controller connected")
         except Exception as exc:
-            logger.warning(
-                f"Data controller unavailable (serving continues without): {exc}"
-            )
+            logger.warning(f"Data controller unavailable (serving continues without): {exc}")
 
     def store_prediction(self, record: PredictRecord) -> None:
         """Persist a prediction record to Postgres.
@@ -52,17 +48,20 @@ class ServingDataController(_DataControllerBase):
         try:
             conn = self._connect()
             with conn.cursor() as cur:
-                cur.execute(_INSERT, (
-                    record.uuid,
-                    record.timestamp,
-                    record.model_version,
-                    record.prediction,
-                    record.confidence,
-                    record.prediction_distribution,  # list[float] → psycopg2 → REAL[]
-                    record.embedding,                # list[float] → psycopg2 → REAL[]
-                    record.annotation_status,
-                    record.annotated_label,
-                ))
+                cur.execute(
+                    _INSERT,
+                    (
+                        record.uuid,
+                        record.timestamp,
+                        record.model_version,
+                        record.prediction,
+                        record.confidence,
+                        record.prediction_distribution,  # list[float] → psycopg2 → REAL[]
+                        record.embedding,  # list[float] → psycopg2 → REAL[]
+                        record.annotation_status,
+                        record.annotated_label,
+                    ),
+                )
             conn.commit()
         except Exception as exc:
             self._failures += 1

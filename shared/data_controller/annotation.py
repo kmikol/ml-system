@@ -66,9 +66,7 @@ class AnnotationDataController(_DataControllerBase):
                 self._conn.rollback()
             except Exception:
                 self._conn = None
-            raise DataControllerError(
-                f"Failed to write label for '{uuid}': {exc}"
-            ) from exc
+            raise DataControllerError(f"Failed to write label for '{uuid}': {exc}") from exc
 
     def reset_candidate(self, uuid: UUID) -> None:
         """Reset a candidate prediction back to 'none' so it can be re-sampled.
@@ -86,6 +84,4 @@ class AnnotationDataController(_DataControllerBase):
                 self._conn.rollback()
             except Exception:
                 self._conn = None
-            raise DataControllerError(
-                f"Failed to reset candidate '{uuid}': {exc}"
-            ) from exc
+            raise DataControllerError(f"Failed to reset candidate '{uuid}': {exc}") from exc

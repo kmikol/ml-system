@@ -48,6 +48,7 @@ def test_predict_white_image_returns_valid_response():
 
 def test_predict_propagates_uuid():
     import uuid
+
     sample_uuid = str(uuid.uuid4())
     r = httpx.post(
         f"{BASE}/predict",
@@ -64,13 +65,16 @@ def test_predict_generates_uuid_when_omitted():
     assert len(r.json()["uuid"]) > 0
 
 
-@pytest.mark.parametrize("bad_body,description", [
-    ({"image": [[0.0] * 14 for _ in range(13)]}, "13 rows instead of 14"),
-    ({"image": [[0.0] * 13 for _ in range(14)]}, "13 cols instead of 14"),
-    ({"image": [[-0.1] * 14 for _ in range(14)]}, "pixel value below 0"),
-    ({"image": [[1.1] * 14 for _ in range(14)]}, "pixel value above 1"),
-    ({}, "missing image field"),
-])
+@pytest.mark.parametrize(
+    "bad_body,description",
+    [
+        ({"image": [[0.0] * 14 for _ in range(13)]}, "13 rows instead of 14"),
+        ({"image": [[0.0] * 13 for _ in range(14)]}, "13 cols instead of 14"),
+        ({"image": [[-0.1] * 14 for _ in range(14)]}, "pixel value below 0"),
+        ({"image": [[1.1] * 14 for _ in range(14)]}, "pixel value above 1"),
+        ({}, "missing image field"),
+    ],
+)
 def test_predict_rejects_invalid_input(bad_body, description):
     r = httpx.post(f"{BASE}/predict", json=bad_body, timeout=10)
     assert r.status_code == 422, f"Expected 422 for: {description}"

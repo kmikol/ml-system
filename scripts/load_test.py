@@ -41,7 +41,7 @@ HEADERS = {"Content-Type": "application/json"}
 _lock = threading.Lock()
 _counters: dict[str, int] = defaultdict(int)
 _latencies: list[float] = []  # per-request ms, collected under _lock
-_pool: list[bytes] = []       # populated in main() before any threads start
+_pool: list[bytes] = []  # populated in main() before any threads start
 
 
 def _load_pool() -> list[bytes]:
@@ -54,10 +54,7 @@ def _load_pool() -> list[bytes]:
         sys.exit(1)
     print(f"Loaded {len(images):,} images. Pre-serializing {_POOL_SIZE:,} payloads...", flush=True)
     idx = np.random.randint(0, len(images), size=_POOL_SIZE)
-    return [
-        json.dumps({"image": images[i].tolist(), "uuid": str(uuids[i])}).encode()
-        for i in idx
-    ]
+    return [json.dumps({"image": images[i].tolist(), "uuid": str(uuids[i])}).encode() for i in idx]
 
 
 def _percentile(data: list[float], p: float) -> float:

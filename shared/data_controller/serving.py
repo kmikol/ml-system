@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import io
 import logging
 import os
 
@@ -15,9 +16,9 @@ logger = logging.getLogger(__name__)
 class ServingDataController(_DataControllerBase):
     """Used by the serving service to persist prediction records.
 
-    Graceful degradation: if Postgres is unavailable at startup, logs a warning
-    and silently skips all writes. Write failures after connection are also
-    swallowed — serving never raises due to DB issues.
+    Graceful degradation: if Postgres or MinIO are unavailable at startup,
+    logs a warning and silently skips the corresponding writes. Failures after
+    connection are also swallowed — serving never raises due to storage issues.
 
     Instantiate at module level; no separate connect() call is needed.
     """
@@ -36,12 +37,42 @@ class ServingDataController(_DataControllerBase):
         except Exception as exc:
             logger.warning(f"Data controller unavailable (serving continues without): {exc}")
 
-    def store_prediction(self, record: PredictRecord) -> None:
-        """Persist a prediction record to Postgres.
+        # MinIO client for prediction image storage — optional, same fire-and-forget semantics.
+        # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY come from the ml-system-secrets K8s Secret.
+        self._s3_available = False
+        endpoint = os.getenv("DATASET_S3_ENDPOINT_URL", "")
+        bucket = os.getenv("DATASET_BUCKET", "")
+        if not endpoint or not bucket:
+            logger.warning(
+                "DATASET_S3_ENDPOINT_URL or DATASET_BUCKET not set, "
+                "prediction images will not be stored in MinIO"
+            )
+        else:
+            try:
+                import boto3  # lazy — only needed in the serving service
 
-        Fire-and-forget: if Postgres is unavailable or the write fails, the
-        error is logged as a warning and swallowed. Serving never raises due
-        to database issues.
+                self._s3 = boto3.client(
+                    "s3",
+                    endpoint_url=endpoint,
+                    aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID", ""),
+                    aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY", ""),
+                )
+                self._bucket = bucket
+                self._s3_available = True
+                logger.info("MinIO client ready for prediction image storage")
+            except Exception as exc:
+                logger.warning(f"MinIO client setup failed (serving continues without): {exc}")
+
+    def store_prediction(self, record: PredictRecord, image_2d: list | None = None) -> None:
+        """Persist a prediction record to Postgres and, if provided, its image to MinIO.
+
+        Fire-and-forget: if either store fails, the error is logged as a warning
+        and swallowed. Serving never raises due to storage issues.
+
+        Args:
+            record:   Fully populated PredictRecord.
+            image_2d: Optional 14×14 nested list of float32 pixel values [0, 1].
+                      Stored in MinIO at predictions/{record.uuid}.npy.
         """
         if not self._available:
             return
@@ -70,3 +101,18 @@ class ServingDataController(_DataControllerBase):
                 self._conn.rollback()
             except Exception:
                 self._conn = None
+
+        if image_2d is not None and self._s3_available:
+            try:
+                import numpy as np  # lazy — only needed in the serving service
+
+                buf = io.BytesIO()
+                np.save(buf, np.array(image_2d, dtype=np.float32))
+                buf.seek(0)
+                self._s3.put_object(
+                    Bucket=self._bucket,
+                    Key=f"predictions/{record.uuid}.npy",
+                    Body=buf.read(),
+                )
+            except Exception as exc:
+                logger.warning(f"Prediction image upload failed for {record.uuid}: {exc}")

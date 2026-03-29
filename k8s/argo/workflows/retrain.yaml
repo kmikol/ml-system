@@ -1,23 +1,217 @@
 # k8s/argo/workflows/retrain.yaml
 #
-# WorkflowTemplate: model retraining pipeline.
+# RBAC + WorkflowTemplate: model retraining pipeline.
 #
 # Triggered by the retrain-sensor when BOTH alerts fire simultaneously:
-#   - PsiThresholdBreached  (PSI class distribution > 0.25)
-#   - AnnotationCountReached (>= 50 annotated samples not yet in training)
+#   - PsiThresholdBreached    (PSI class distribution > 0.25)
+#   - AnnotationCountReached  (>= 50 annotated samples not yet in training)
 #
-# Currently a placeholder — the real training logic will be implemented later.
-# The dummy step just prints a message and exits successfully.
+# Steps (sequential):
+#   1. integrate-annotations — builds a new cumulative dataset version from
+#      annotated predictions; writes version_id to /tmp/version_id.txt
+#   2. train                 — trains on the new version, registers in MLflow
+#                              (promotion deferred); writes run_id to /tmp/run_id.txt
+#   3. evaluate-and-promote  — compares val_acc against Production; promotes if
+#                              new model meets threshold; serving auto-reloads
+#                              within SERVING_MODEL_POLL_INTERVAL=60s
+#
+# Model deployment strategy: in-place hot-swap via MLflow alias.
+# The serving background thread detects the Production alias change and reloads
+# atomically under lock — no restart step needed.
+
+---
+# Minimal ServiceAccount for the retrain workflow.
+# Only needs workflowtaskresults access (required by Argo emissary executor).
+# No kubectl/deployment access needed — serving hot-swaps via MLflow polling.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: retrain-workflow
+  namespace: argo
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: retrain-workflow-role
+rules:
+  - apiGroups: [argoproj.io]
+    resources: [workflowtaskresults]
+    verbs: [create, patch]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: argo-retrain-workflow-role
+subjects:
+  - kind: ServiceAccount
+    name: retrain-workflow
+    namespace: argo
+roleRef:
+  kind: ClusterRole
+  name: retrain-workflow-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
 apiVersion: argoproj.io/v1alpha1
 kind: WorkflowTemplate
 metadata:
   name: retrain
   namespace: argo
 spec:
+  serviceAccountName: retrain-workflow
   entrypoint: retrain
+
   templates:
+
+    # ── Entrypoint: sequential steps ─────────────────────────────────────────
     - name: retrain
+      steps:
+        - - name: integrate-annotations
+            template: integrate-annotations
+        - - name: train
+            template: train
+            arguments:
+              parameters:
+                - name: version-id
+                  value: "{{steps.integrate-annotations.outputs.parameters.version-id}}"
+        - - name: evaluate-and-promote
+            template: evaluate-and-promote
+            arguments:
+              parameters:
+                - name: run-id
+                  value: "{{steps.train.outputs.parameters.run-id}}"
+                - name: version-id
+                  value: "{{steps.integrate-annotations.outputs.parameters.version-id}}"
+
+    # ── Step 1: integrate-annotations ────────────────────────────────────────
+    # Queries annotated predictions not yet in any dataset version, downloads
+    # their images from MinIO (stored by serving at predictions/{uuid}.npy),
+    # and creates a new cumulative dataset version.
+    # Idempotent: if no new annotations exist, re-uses the current version.
+    - name: integrate-annotations
+      outputs:
+        parameters:
+          - name: version-id
+            valueFrom:
+              path: /tmp/version_id.txt
       container:
-        image: python:3.11-slim
-        imagePullPolicy: IfNotPresent
-        command: [python, -c, "print('Retraining triggered — placeholder implementation')"]
+        image: ml-system-training:latest
+        imagePullPolicy: Never
+        workingDir: /app
+        command: [python, scripts/integrate_annotations.py]
+        env:
+          - name: DATA_CONTROLLER_DB_URL
+            value: "postgresql://mlflow:mlflow@postgres.ml-system.svc.cluster.local:5432/mlflow"
+          - name: DATASET_S3_ENDPOINT_URL
+            value: "http://minio.ml-system.svc.cluster.local:9000"
+          - name: DATASET_BUCKET
+            value: "mnist-dataset"
+          - name: AWS_ACCESS_KEY_ID
+            value: "minioadmin"
+          - name: AWS_SECRET_ACCESS_KEY
+            value: "minioadmin"
+          - name: VERSION_ID_OUTPUT_PATH
+            value: "/tmp/version_id.txt"
+
+    # ── Step 2: train ─────────────────────────────────────────────────────────
+    # Trains on the latest dataset version (integrate-annotations step committed
+    # it; get_latest_version() returns it). AUTO_PROMOTE=false defers promotion
+    # to the evaluate-and-promote step. Writes run_id for downstream use.
+    - name: train
+      inputs:
+        parameters:
+          - name: version-id  # explicit dependency on integrate-annotations
+      outputs:
+        parameters:
+          - name: run-id
+            valueFrom:
+              path: /tmp/run_id.txt
+      initContainers:
+        - name: wait-for-mlflow
+          image: busybox
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - |
+              until wget -q -O- http://mlflow.ml-system.svc.cluster.local:5000/health; do
+                echo "waiting for mlflow..."; sleep 3
+              done
+      container:
+        image: ml-system-training:latest
+        imagePullPolicy: Never
+        workingDir: /app
+        command: [python, -m, training.main]
+        env:
+          - name: MLFLOW_TRACKING_URI
+            value: "http://mlflow.ml-system.svc.cluster.local:5000"
+          - name: MLFLOW_S3_ENDPOINT_URL
+            value: "http://minio.ml-system.svc.cluster.local:9000"
+          - name: AWS_ACCESS_KEY_ID
+            value: "minioadmin"
+          - name: AWS_SECRET_ACCESS_KEY
+            value: "minioadmin"
+          - name: DATA_CONTROLLER_DB_URL
+            value: "postgresql://mlflow:mlflow@postgres.ml-system.svc.cluster.local:5432/mlflow"
+          - name: DATASET_S3_ENDPOINT_URL
+            value: "http://minio.ml-system.svc.cluster.local:9000"
+          - name: DATASET_BUCKET
+            value: "mnist-dataset"
+          - name: MODEL_NAME
+            value: "ml_system_model"
+          - name: TRAINING_MAX_EPOCHS
+            value: "20"
+          - name: TRAINING_SEED
+            value: "42"
+          - name: TRAINING_BATCH_SIZE
+            value: "256"
+          - name: TRAINING_LR
+            value: "1e-3"
+          - name: AUTO_PROMOTE
+            value: "false"
+          - name: RUN_ID_OUTPUT_PATH
+            value: "/tmp/run_id.txt"
+
+    # ── Step 3: evaluate-and-promote ─────────────────────────────────────────
+    # Scores the current Production model on the NEW val split (same data as
+    # the new model was validated on) and uses that as the promotion baseline.
+    # This makes the comparison fair even when the dataset changes between
+    # versions — a harder val split no longer unfairly penalises the new model.
+    # The baseline is logged to MLflow on the new run as "baseline_val_acc".
+    # Always exits 0 — not promoting is a valid outcome.
+    # Serving auto-reloads the new model within SERVING_MODEL_POLL_INTERVAL=60s.
+    - name: evaluate-and-promote
+      inputs:
+        parameters:
+          - name: run-id
+          - name: version-id
+      container:
+        image: ml-system-training:latest
+        imagePullPolicy: Never
+        workingDir: /app
+        command: [python, scripts/evaluate_and_promote.py]
+        env:
+          - name: MLFLOW_TRACKING_URI
+            value: "http://mlflow.ml-system.svc.cluster.local:5000"
+          - name: MLFLOW_S3_ENDPOINT_URL
+            value: "http://minio.ml-system.svc.cluster.local:9000"
+          - name: AWS_ACCESS_KEY_ID
+            value: "minioadmin"
+          - name: AWS_SECRET_ACCESS_KEY
+            value: "minioadmin"
+          - name: DATA_CONTROLLER_DB_URL
+            value: "postgresql://mlflow:mlflow@postgres.ml-system.svc.cluster.local:5432/mlflow"
+          - name: DATASET_S3_ENDPOINT_URL
+            value: "http://minio.ml-system.svc.cluster.local:9000"
+          - name: DATASET_BUCKET
+            value: "mnist-dataset"
+          - name: MODEL_NAME
+            value: "ml_system_model"
+          - name: NEW_RUN_ID
+            value: "{{inputs.parameters.run-id}}"
+          - name: VERSION_ID
+            value: "{{inputs.parameters.version-id}}"
+          - name: MIN_VAL_ACC_IMPROVEMENT
+            value: "0.0"

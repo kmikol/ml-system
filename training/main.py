@@ -6,6 +6,7 @@ Usage: python -m training.main
 
 import logging
 import os
+from pathlib import Path
 
 import numpy as np
 import onnx
@@ -33,6 +34,7 @@ MAX_EPOCHS = int(require_env("TRAINING_MAX_EPOCHS"))
 SEED = int(require_env("TRAINING_SEED"))
 BATCH_SIZE = int(require_env("TRAINING_BATCH_SIZE"))
 LR = float(require_env("TRAINING_LR"))
+AUTO_PROMOTE = os.environ.get("AUTO_PROMOTE", "true").lower() == "true"
 ONNX_FILENAME = "model.onnx"
 
 
@@ -237,8 +239,17 @@ def main():
         # ── Register model ──
         version = controller.register_model(run_id, MODEL_NAME)
         logger.info(f"Registered version {version}")
-        controller.promote_model(MODEL_NAME, version)
-        logger.info(f"Version {version} → Production")
+        if AUTO_PROMOTE:
+            controller.promote_model(MODEL_NAME, version)
+            logger.info(f"Version {version} → Production")
+        else:
+            logger.info(f"Version {version} registered, promotion deferred to evaluate step")
+
+    run_id_output_path = os.environ.get("RUN_ID_OUTPUT_PATH", "")
+    if run_id_output_path:
+        os.makedirs(os.path.dirname(run_id_output_path) or ".", exist_ok=True)
+        Path(run_id_output_path).write_text(run_id)
+        logger.info(f"run_id written to {run_id_output_path}")
 
     logger.info("Done.")
 

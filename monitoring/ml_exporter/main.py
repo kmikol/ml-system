@@ -36,10 +36,11 @@ from prometheus_client import (
 
 from shared.config import require_env
 from shared.data_controller.drift import DriftDataController
+from shared.logging_config import setup_logging
 from shared.model_artifact_controller import ModelArtifactController, ModelArtifactError
 from shared.schemas.predict_record import PredictRecord
 
-logging.basicConfig(level=logging.INFO)
+setup_logging("ml-exporter")
 logger = logging.getLogger(__name__)
 
 # Minimum predictions in window before PSI is meaningful.

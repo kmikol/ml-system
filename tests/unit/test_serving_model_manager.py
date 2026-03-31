@@ -143,6 +143,104 @@ class TestModelManagerPredict:
         assert call_kwargs["features"].dtype == np.float32
 
 
+# ── ModelManager.predict shape validation ─────────────────────────────────────
+
+
+class TestPredictShapeValidation:
+    """Test shape validation in predict() to prevent IndexError."""
+
+    def test_raises_on_empty_logits_batch(self, fresh_manager):
+        """Empty logits batch should raise ValueError."""
+        model_sess = MagicMock()
+        # Return empty batch: (0, 10) shape
+        model_sess.run.return_value = [
+            np.zeros((0, NUM_CLASSES), dtype=np.float32),
+            np.zeros((1, EMBEDDING_DIM), dtype=np.float32),
+        ]
+        fresh_manager.model_session = model_sess
+        fresh_manager.model_version = "test-run"
+
+        features = np.zeros((1, INPUT_DIM), dtype=np.float32)
+        with pytest.raises(ValueError, match="Invalid logits shape.*batch_size >= 1"):
+            fresh_manager.predict(features)
+
+    def test_raises_on_empty_embedding_batch(self, fresh_manager):
+        """Empty embedding batch should raise ValueError."""
+        model_sess = MagicMock()
+        # Return empty embedding batch: (0, 64) shape
+        model_sess.run.return_value = [
+            np.zeros((1, NUM_CLASSES), dtype=np.float32),
+            np.zeros((0, EMBEDDING_DIM), dtype=np.float32),
+        ]
+        fresh_manager.model_session = model_sess
+        fresh_manager.model_version = "test-run"
+
+        features = np.zeros((1, INPUT_DIM), dtype=np.float32)
+        with pytest.raises(ValueError, match="Invalid embedding shape.*batch_size >= 1"):
+            fresh_manager.predict(features)
+
+    def test_raises_on_1d_logits(self, fresh_manager):
+        """1D logits array should raise ValueError."""
+        model_sess = MagicMock()
+        # Return 1D array instead of 2D
+        model_sess.run.return_value = [
+            np.zeros((NUM_CLASSES,), dtype=np.float32),
+            np.zeros((1, EMBEDDING_DIM), dtype=np.float32),
+        ]
+        fresh_manager.model_session = model_sess
+        fresh_manager.model_version = "test-run"
+
+        features = np.zeros((1, INPUT_DIM), dtype=np.float32)
+        with pytest.raises(ValueError, match="Invalid logits shape"):
+            fresh_manager.predict(features)
+
+    def test_raises_on_1d_embedding(self, fresh_manager):
+        """1D embedding array should raise ValueError."""
+        model_sess = MagicMock()
+        # Return 1D embedding instead of 2D
+        model_sess.run.return_value = [
+            np.zeros((1, NUM_CLASSES), dtype=np.float32),
+            np.zeros((EMBEDDING_DIM,), dtype=np.float32),
+        ]
+        fresh_manager.model_session = model_sess
+        fresh_manager.model_version = "test-run"
+
+        features = np.zeros((1, INPUT_DIM), dtype=np.float32)
+        with pytest.raises(ValueError, match="Invalid embedding shape"):
+            fresh_manager.predict(features)
+
+    def test_raises_on_3d_logits(self, fresh_manager):
+        """3D logits array should raise ValueError."""
+        model_sess = MagicMock()
+        # Return 3D array
+        model_sess.run.return_value = [
+            np.zeros((1, 1, NUM_CLASSES), dtype=np.float32),
+            np.zeros((1, EMBEDDING_DIM), dtype=np.float32),
+        ]
+        fresh_manager.model_session = model_sess
+        fresh_manager.model_version = "test-run"
+
+        features = np.zeros((1, INPUT_DIM), dtype=np.float32)
+        with pytest.raises(ValueError, match="Invalid logits shape"):
+            fresh_manager.predict(features)
+
+    def test_accepts_valid_shapes(self, fresh_manager):
+        """Valid (1, num_classes) and (1, embedding_dim) shapes should work."""
+        model_sess = MagicMock()
+        model_sess.run.return_value = [
+            _make_logits(prediction=5),
+            _make_embedding(),
+        ]
+        fresh_manager.model_session = model_sess
+        fresh_manager.model_version = "test-run"
+
+        features = np.zeros((1, INPUT_DIM), dtype=np.float32)
+        result = fresh_manager.predict(features)
+        # Should not raise and should return valid result
+        assert result["prediction"] == 5
+        assert len(result["embedding"]) == EMBEDDING_DIM
+
+
 # ── ModelManager.load_from_mlflow ─────────────────────────────────────────────
 
 

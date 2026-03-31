@@ -139,6 +139,19 @@ class ModelManager:
                 {"features": features_array.astype(np.float32)},
             )
 
+        # Validate shapes with detailed messages
+        if len(logits.shape) != 2 or logits.shape[0] == 0:
+            raise ValueError(
+                f"Invalid logits shape: {logits.shape}. "
+                f"Expected (batch_size, num_classes) with batch_size >= 1"
+            )
+
+        if len(embedding.shape) != 2 or embedding.shape[0] == 0:
+            raise ValueError(
+                f"Invalid embedding shape: {embedding.shape}. "
+                f"Expected (batch_size, embedding_dim) with batch_size >= 1"
+            )
+
         probs = softmax(logits[0])
         prediction = int(np.argmax(probs))
         return {

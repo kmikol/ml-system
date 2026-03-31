@@ -1,4 +1,4 @@
-# tests/unit/test_config.py
+# shared/tests/unit/test_config.py
 """Unit tests for shared/config.py::require_env."""
 
 from __future__ import annotations

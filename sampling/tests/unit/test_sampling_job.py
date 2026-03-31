@@ -1,4 +1,4 @@
-# tests/unit/test_sampling_job.py
+# sampling/tests/unit/test_sampling_job.py
 """
 Unit tests for the sampling job (sampling/main.py).
 

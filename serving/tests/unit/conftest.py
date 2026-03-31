@@ -1,0 +1,23 @@
+# serving/tests/unit/conftest.py
+"""
+Set required environment variables before any serving module is imported.
+
+serving/main.py calls require_env() at module level, which calls sys.exit(1)
+if the variable is absent.  pytest loads conftest.py before collecting test
+files, so setting os.environ here guarantees the variables are visible when
+test modules import the serving module.
+
+DATA_CONTROLLER_DB_URL is intentionally omitted:
+  ServingDataController gracefully degrades to a no-op when the URL is
+  absent, which is the correct behaviour to exercise in unit tests.
+"""
+
+import os
+
+os.environ.setdefault("MODEL_NAME", "test-model")
+os.environ.setdefault("MODEL_STAGE", "Production")
+os.environ.setdefault("SERVING_MODEL_POLL_INTERVAL", "60")
+os.environ.setdefault("SERVING_SIMULATED_LATENCY_MS", "0")
+# ModelArtifactController reads this at construction time (module-level in serving/main.py).
+# A fake value is fine — tests patch load_from_mlflow before any real MLflow call is made.
+os.environ.setdefault("MLFLOW_TRACKING_URI", "http://localhost:5000")

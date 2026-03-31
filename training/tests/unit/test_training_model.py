@@ -1,4 +1,4 @@
-# tests/unit/test_training_model.py
+# training/tests/unit/test_training_model.py
 """
 Unit tests for training/model.py.
 

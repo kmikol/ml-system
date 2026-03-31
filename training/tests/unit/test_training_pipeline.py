@@ -1,4 +1,4 @@
-# tests/unit/test_training_pipeline.py
+# training/tests/unit/test_training_pipeline.py
 """
 Unit tests for training/main.py pure functions and main() orchestration.
 

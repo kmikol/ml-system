@@ -1,4 +1,4 @@
-# tests/unit/test_schemas.py
+# shared/schemas/tests/unit/test_schemas.py
 """
 Unit tests for shared/schemas/api.py and shared/schemas/inference_event.py.
 

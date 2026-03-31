@@ -1,4 +1,4 @@
-# tests/unit/test_ml_exporter.py
+# monitoring/ml_exporter/tests/unit/test_ml_exporter.py
 """
 Unit tests for monitoring/ml_exporter/main.py.
 

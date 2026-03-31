@@ -504,10 +504,29 @@ test: ## Run lint, type checking, and all tests (unit + integration) in Docker
 	exit $$EXIT
 
 test.unit: ## Run unit tests locally (no Docker needed)
-	PYTHONPATH=. python -m pytest tests/unit/ shared/data_controller/tests/unit/ shared/model_artifact_controller/tests/unit/ -v
+	PYTHONPATH=. python -m pytest \
+		annotation/tests/unit/ \
+		monitoring/ml_exporter/tests/unit/ \
+		sampling/tests/unit/ \
+		serving/tests/unit/ \
+		training/tests/unit/ \
+		shared/tests/unit/ \
+		shared/schemas/tests/unit/ \
+		shared/data_controller/tests/unit/ \
+		shared/model_artifact_controller/tests/unit/ \
+		-v
 
 test.coverage: ## Run unit tests with line-level coverage report (no Docker needed)
-	PYTHONPATH=. python -m pytest tests/unit/ shared/data_controller/tests/unit/ shared/model_artifact_controller/tests/unit/ \
+	PYTHONPATH=. python -m pytest \
+		annotation/tests/unit/ \
+		monitoring/ml_exporter/tests/unit/ \
+		sampling/tests/unit/ \
+		serving/tests/unit/ \
+		training/tests/unit/ \
+		shared/tests/unit/ \
+		shared/schemas/tests/unit/ \
+		shared/data_controller/tests/unit/ \
+		shared/model_artifact_controller/tests/unit/ \
 		--cov=serving --cov=annotation --cov=sampling --cov=monitoring --cov=shared \
 		--cov-report=term-missing \
 		--cov-omit='*/tests/*,*/__pycache__/*' \
@@ -515,6 +534,8 @@ test.coverage: ## Run unit tests with line-level coverage report (no Docker need
 
 test.integration: ## Run integration tests in Docker
 	$(TEST_COMPOSE) run --rm test pytest \
+		monitoring/ml_exporter/tests/integration/ \
+		serving/tests/integration/ \
 		shared/data_controller/tests/integration/ \
 		shared/model_artifact_controller/tests/integration/ \
 		-v; \

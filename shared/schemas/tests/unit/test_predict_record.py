@@ -1,4 +1,4 @@
-# tests/unit/test_predict_record.py
+# shared/schemas/tests/unit/test_predict_record.py
 """
 Unit tests for the PredictRecord Pydantic schema.
 

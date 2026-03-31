@@ -1,4 +1,4 @@
-# tests/unit/test_ml_exporter_app.py
+# monitoring/ml_exporter/tests/unit/test_ml_exporter_app.py
 """
 Unit tests for monitoring/ml_exporter/main.py — the untested portions:
   - ExporterConfig.from_env()

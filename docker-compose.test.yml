@@ -100,7 +100,13 @@ services:
     working_dir: /workspace
     command: >
       pytest
-        tests/unit/
+        annotation/tests/unit/
+        monitoring/ml_exporter/tests/unit/
+        sampling/tests/unit/
+        serving/tests/unit/
+        training/tests/unit/
+        shared/tests/unit/
+        shared/schemas/tests/unit/
         shared/data_controller/tests/unit/
         shared/data_controller/tests/integration/
         shared/model_artifact_controller/tests/unit/

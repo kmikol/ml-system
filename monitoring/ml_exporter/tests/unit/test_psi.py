@@ -1,4 +1,4 @@
-# tests/unit/test_psi.py
+# monitoring/ml_exporter/tests/unit/test_psi.py
 """
 Unit tests for compute_psi() in monitoring/ml_exporter/main.py.
 

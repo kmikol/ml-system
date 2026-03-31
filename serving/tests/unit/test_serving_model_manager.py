@@ -1,4 +1,4 @@
-# tests/unit/test_serving_model_manager.py
+# serving/tests/unit/test_serving_model_manager.py
 """
 Unit tests for serving/main.py::ModelManager internals.
 

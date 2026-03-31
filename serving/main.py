@@ -134,10 +134,20 @@ class ModelManager:
         with self._lock:
             if self.model_session is None:
                 raise RuntimeError("Model not loaded")
-            logits, embedding = self.model_session.run(
-                ["logits", "embedding"],
-                {"features": features_array.astype(np.float32)},
-            )
+            # Capture a local reference while holding the lock so that a
+            # concurrent load_from_mlflow() cannot swap the session between
+            # the is-loaded check and the actual inference call.  The local
+            # reference keeps the session alive for the duration of this call
+            # even if load_from_mlflow() replaces self.model_session.
+            session = self.model_session
+
+        # Run inference outside the lock.  Using the captured local reference
+        # is safe: the ONNX session object is immutable after creation and
+        # remains valid as long as we hold a Python reference to it.
+        logits, embedding = session.run(
+            ["logits", "embedding"],
+            {"features": features_array.astype(np.float32)},
+        )
 
         # Validate shapes with detailed messages
         if len(logits.shape) != 2 or logits.shape[0] == 0:

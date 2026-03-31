@@ -11,6 +11,7 @@ conftest.py sets the required env vars before this module is imported.
 
 from __future__ import annotations
 
+import threading
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
@@ -420,3 +421,115 @@ class TestMahalanobisScoring:
         assert "prediction" in body
         assert "confidence" in body
         assert "uuid" in body
+
+
+# ── Thread-safety / concurrency tests ────────────────────────────────────────
+
+
+class TestConcurrency:
+    """Verify that predict() is safe under concurrent access and model reloads."""
+
+    def test_concurrent_predictions_all_succeed(self, fresh_manager):
+        """Multiple threads calling predict() simultaneously must all succeed."""
+        model_sess = _mock_sessions(prediction=7)
+        fresh_manager.model_session = model_sess
+        fresh_manager.model_version = "test-run"
+
+        errors: list[Exception] = []
+        results: list[dict] = []
+        lock = threading.Lock()
+
+        def run_predict():
+            try:
+                result = fresh_manager.predict(np.zeros((1, INPUT_DIM), dtype=np.float32))
+                with lock:
+                    results.append(result)
+            except Exception as exc:  # noqa: BLE001
+                with lock:
+                    errors.append(exc)
+
+        threads = [threading.Thread(target=run_predict) for _ in range(20)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert errors == [], f"Concurrent predict raised: {errors}"
+        assert len(results) == 20
+        assert all(r["prediction"] == 7 for r in results)
+
+    def test_model_reload_during_inference_does_not_corrupt_result(self, fresh_manager):
+        """Replacing the session while inference is in flight must not corrupt results.
+
+        We simulate a slow inference (via a side-effect that briefly yields to
+        the scheduler) and a concurrent load_from_mlflow()-style swap.  After
+        both threads finish every result must be self-consistent — the
+        prediction and confidence must always agree with the same session's
+        logits.
+        """
+        barrier = threading.Barrier(2)
+
+        v1_prediction = 3
+        v2_prediction = 7
+
+        v1_logits = _make_logits(v1_prediction)
+        v2_logits = _make_logits(v2_prediction)
+
+        def v1_run(output_names, feed):
+            # Signal that inference has started, then wait for the swap thread
+            # to be ready so we maximise the chance of overlap.
+            barrier.wait(timeout=5)
+            return [v1_logits, _make_embedding()]
+
+        session_v1 = MagicMock()
+        session_v1.run.side_effect = v1_run
+
+        session_v2 = MagicMock()
+        session_v2.run.return_value = [v2_logits, _make_embedding()]
+
+        fresh_manager.model_session = session_v1
+        fresh_manager.model_version = "v1"
+
+        inference_result: list[dict] = []
+        inference_errors: list[Exception] = []
+
+        def run_inference():
+            try:
+                res = fresh_manager.predict(np.zeros((1, INPUT_DIM), dtype=np.float32))
+                inference_result.append(res)
+            except Exception as exc:  # noqa: BLE001
+                inference_errors.append(exc)
+
+        def swap_session():
+            # Wait until inference has captured its local reference, then swap.
+            barrier.wait(timeout=5)
+            with fresh_manager._lock:
+                fresh_manager.model_session = session_v2
+                fresh_manager.model_version = "v2"
+
+        t_infer = threading.Thread(target=run_inference)
+        t_swap = threading.Thread(target=swap_session)
+
+        t_infer.start()
+        t_swap.start()
+        t_infer.join(timeout=5)
+        t_swap.join(timeout=5)
+
+        assert inference_errors == [], f"Inference raised: {inference_errors}"
+        assert len(inference_result) == 1
+
+        result = inference_result[0]
+        # The prediction must correspond to one consistent session.
+        # v1_prediction=3, v2_prediction=7 — must not be any other value.
+        assert result["prediction"] in {v1_prediction, v2_prediction}
+        # The confidence reported must match the distribution entry for that class.
+        pred_class = result["prediction"]
+        assert result["confidence"] == pytest.approx(
+            result["prediction_distribution"][pred_class], abs=1e-5
+        )
+
+    def test_predict_raises_when_session_is_none_at_check_time(self, fresh_manager):
+        """If model_session is None when predict() acquires the lock it must raise."""
+        fresh_manager.model_session = None
+        with pytest.raises(RuntimeError, match="Model not loaded"):
+            fresh_manager.predict(np.zeros((1, INPUT_DIM), dtype=np.float32))

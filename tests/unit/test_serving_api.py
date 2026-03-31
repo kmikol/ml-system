@@ -12,7 +12,7 @@ Strategy
   asyncio.sleep is patched to an AsyncMock so the lifespan retry loop
   completes instantly.
 - Individual tests that need a "ready" model use the ready_model fixture,
-  which sets classifier_session (makes is_ready True) and patches predict().
+  which sets model_session (makes is_ready True) and patches predict().
 """
 
 from __future__ import annotations
@@ -57,20 +57,20 @@ def ready_model():
     """
     Temporarily configure model_manager as if a model were loaded.
 
-    Sets classifier_session (which makes is_ready return True) and patches
+    Sets model_session (which makes is_ready return True) and patches
     the predict() method to return a deterministic fake result.
     """
-    original_session = _serving.model_manager.classifier_session
+    original_session = _serving.model_manager.model_session
     original_version = _serving.model_manager.model_version
 
-    _serving.model_manager.classifier_session = MagicMock()
+    _serving.model_manager.model_session = MagicMock()
     _serving.model_manager.model_version = "mock-run-id"
     _serving.model_manager.class_gaussians = None
 
     with patch.object(_serving.model_manager, "predict", return_value=_MOCK_PREDICT_RESULT):
         yield
 
-    _serving.model_manager.classifier_session = original_session
+    _serving.model_manager.model_session = original_session
     _serving.model_manager.model_version = original_version
 
 

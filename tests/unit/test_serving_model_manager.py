@@ -11,6 +11,7 @@ conftest.py sets the required env vars before this module is imported.
 
 from __future__ import annotations
 
+import threading
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
@@ -420,3 +421,107 @@ class TestMahalanobisScoring:
         assert "prediction" in body
         assert "confidence" in body
         assert "uuid" in body
+
+
+# ── ModelManager thread-safety ────────────────────────────────────────────────
+
+
+class TestModelManagerThreadSafety:
+    """Verify predict() is safe under concurrent calls and model reloads."""
+
+    def test_concurrent_predictions_return_consistent_results(self, fresh_manager):
+        """Multiple threads calling predict() simultaneously all get valid results."""
+        model_sess = _mock_sessions(prediction=7)
+        fresh_manager.model_session = model_sess
+        fresh_manager.model_version = "thread-test"
+
+        features = np.zeros((1, INPUT_DIM), dtype=np.float32)
+        results = []
+        errors = []
+
+        def run_predict():
+            try:
+                results.append(fresh_manager.predict(features))
+            except Exception as exc:
+                errors.append(exc)
+
+        threads = [threading.Thread(target=run_predict) for _ in range(10)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert errors == [], f"Unexpected errors during concurrent predict: {errors}"
+        assert len(results) == 10
+        for r in results:
+            assert r["prediction"] == 7
+
+    def test_model_reload_during_inference_does_not_corrupt_result(self, fresh_manager, tmp_path):
+        """Replacing model_session while predict() is running does not corrupt the result.
+
+        The local-reference approach ensures that each predict() call captures
+        the session it started with; a concurrent load_from_mlflow() that
+        swaps self.model_session cannot change which session that call uses.
+        """
+        # Session A: prediction = class 2
+        session_a = _mock_sessions(prediction=2)
+        # Session B: prediction = class 8  (simulates a new model version)
+        session_b = _mock_sessions(prediction=8)
+
+        inference_started = threading.Event()
+        reload_complete = threading.Event()
+
+        original_run = session_a.run.side_effect
+
+        def slow_run(*args, **kwargs):
+            # Signal that inference has started, then wait for the reload
+            inference_started.set()
+            reload_complete.wait(timeout=2.0)
+            return [_make_logits(2), _make_embedding()]
+
+        session_a.run.side_effect = slow_run
+
+        fresh_manager.model_session = session_a
+        fresh_manager.model_version = "v1"
+
+        predict_result = {}
+
+        def run_predict():
+            features = np.zeros((1, INPUT_DIM), dtype=np.float32)
+            predict_result["result"] = fresh_manager.predict(features)
+
+        predict_thread = threading.Thread(target=run_predict)
+        predict_thread.start()
+
+        # Wait until inference has started, then swap the session
+        inference_started.wait(timeout=2.0)
+        with fresh_manager._lock:
+            fresh_manager.model_session = session_b
+            fresh_manager.model_version = "v2"
+        reload_complete.set()
+
+        predict_thread.join(timeout=5.0)
+        assert not predict_thread.is_alive(), "predict() thread did not finish in time"
+
+        # The in-flight predict() must have used session_a (class 2),
+        # not session_b (class 8), because it captured the local reference first.
+        assert predict_result["result"]["prediction"] == 2
+
+    def test_predict_raises_when_session_is_none(self, fresh_manager):
+        """RuntimeError is raised even under concurrent access when no model is loaded."""
+        features = np.zeros((1, INPUT_DIM), dtype=np.float32)
+        errors = []
+
+        def run_predict():
+            try:
+                fresh_manager.predict(features)
+            except RuntimeError:
+                errors.append(True)
+
+        threads = [threading.Thread(target=run_predict) for _ in range(5)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert len(errors) == 5, "Each thread should have raised RuntimeError"

@@ -134,10 +134,15 @@ class ModelManager:
         with self._lock:
             if self.model_session is None:
                 raise RuntimeError("Model not loaded")
-            logits, embedding = self.model_session.run(
-                ["logits", "embedding"],
-                {"features": features_array.astype(np.float32)},
-            )
+            # Capture a local reference while holding the lock so that a
+            # concurrent load_from_mlflow() replacing self.model_session
+            # cannot affect this inference run.
+            session = self.model_session
+
+        logits, embedding = session.run(
+            ["logits", "embedding"],
+            {"features": features_array.astype(np.float32)},
+        )
 
         # Validate shapes with detailed messages
         if len(logits.shape) != 2 or logits.shape[0] == 0:

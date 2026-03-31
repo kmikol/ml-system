@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from training.model import Classifier, ClassifierWrapper, EmbedderWrapper
+from training.model import Classifier, ClassifierWrapper, EmbedderWrapper, UnifiedWrapper
 
 INPUT_DIM = 196
 EMBEDDING_DIM = 64
@@ -184,3 +184,36 @@ class TestEmbedderWrapper:
         x = torch.randn(2, INPUT_DIM)
         out = wrapper(x)
         assert isinstance(out, torch.Tensor)
+
+
+# ── UnifiedWrapper ────────────────────────────────────────────────────────────
+
+
+class TestUnifiedWrapper:
+    @pytest.fixture
+    def wrapper(self, model) -> UnifiedWrapper:
+        model.eval()
+        return UnifiedWrapper(model)
+
+    @pytest.mark.parametrize("batch_size", [1, 4, 16])
+    def test_output_shapes(self, wrapper, batch_size):
+        with torch.no_grad():
+            x = torch.randn(batch_size, INPUT_DIM)
+            logits, embedding = wrapper(x)
+        assert logits.shape == (batch_size, NUM_CLASSES)
+        assert embedding.shape == (batch_size, EMBEDDING_DIM)
+
+    def test_output_matches_classifier(self, model, wrapper):
+        model.eval()
+        x = torch.randn(4, INPUT_DIM)
+        with torch.no_grad():
+            logits_direct, embedding_direct = model(x)
+            logits_wrapper, embedding_wrapper = wrapper(x)
+        assert torch.allclose(logits_direct, logits_wrapper)
+        assert torch.allclose(embedding_direct, embedding_wrapper)
+
+    def test_returns_two_tensors(self, wrapper):
+        x = torch.randn(2, INPUT_DIM)
+        logits, embedding = wrapper(x)
+        assert isinstance(logits, torch.Tensor)
+        assert isinstance(embedding, torch.Tensor)

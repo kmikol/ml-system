@@ -95,41 +95,27 @@ class TestMakeDataloaders:
 
 
 class TestExportOnnx:
-    def test_creates_correct_subdirectories(self, small_model, tmp_path):
+    def test_creates_correct_subdirectory(self, small_model, tmp_path):
         export_dir = str(tmp_path)
-        cls_dir, emb_dir = export_onnx(small_model, export_dir)
-        assert os.path.isdir(cls_dir)
-        assert os.path.isdir(emb_dir)
-        assert cls_dir.endswith("model")
-        assert emb_dir.endswith("embedder")
+        model_dir = export_onnx(small_model, export_dir)
+        assert os.path.isdir(model_dir)
+        assert model_dir.endswith("model")
 
-    def test_onnx_files_exist(self, small_model, tmp_path):
-        cls_dir, emb_dir = export_onnx(small_model, str(tmp_path))
-        assert os.path.isfile(os.path.join(cls_dir, "model.onnx"))
-        assert os.path.isfile(os.path.join(emb_dir, "model.onnx"))
+    def test_onnx_file_exists(self, small_model, tmp_path):
+        model_dir = export_onnx(small_model, str(tmp_path))
+        assert os.path.isfile(os.path.join(model_dir, "model.onnx"))
 
-    def test_classifier_onnx_is_valid(self, small_model, tmp_path):
-        cls_dir, _ = export_onnx(small_model, str(tmp_path))
-        model_proto = onnx.load(os.path.join(cls_dir, "model.onnx"), load_external_data=True)
+    def test_onnx_is_valid(self, small_model, tmp_path):
+        model_dir = export_onnx(small_model, str(tmp_path))
+        model_proto = onnx.load(os.path.join(model_dir, "model.onnx"), load_external_data=True)
         onnx.checker.check_model(model_proto)  # raises if invalid
 
-    def test_embedder_onnx_is_valid(self, small_model, tmp_path):
-        _, emb_dir = export_onnx(small_model, str(tmp_path))
-        model_proto = onnx.load(os.path.join(emb_dir, "model.onnx"), load_external_data=True)
-        onnx.checker.check_model(model_proto)
-
-    def test_classifier_onnx_runs(self, small_model, tmp_path):
-        cls_dir, _ = export_onnx(small_model, str(tmp_path))
-        sess = ort.InferenceSession(os.path.join(cls_dir, "model.onnx"))
+    def test_onnx_runs_and_outputs_both(self, small_model, tmp_path):
+        model_dir = export_onnx(small_model, str(tmp_path))
+        sess = ort.InferenceSession(os.path.join(model_dir, "model.onnx"))
         dummy = np.random.randn(2, INPUT_DIM).astype(np.float32)
-        (logits,) = sess.run(["logits"], {"features": dummy})
+        logits, embedding = sess.run(["logits", "embedding"], {"features": dummy})
         assert logits.shape == (2, NUM_CLASSES)
-
-    def test_embedder_onnx_runs(self, small_model, tmp_path):
-        _, emb_dir = export_onnx(small_model, str(tmp_path))
-        sess = ort.InferenceSession(os.path.join(emb_dir, "model.onnx"))
-        dummy = np.random.randn(2, INPUT_DIM).astype(np.float32)
-        (embedding,) = sess.run(["embedding"], {"features": dummy})
         assert embedding.shape == (2, EMBEDDING_DIM)
 
 

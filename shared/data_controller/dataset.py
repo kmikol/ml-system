@@ -111,10 +111,11 @@ class DatasetController(_DataControllerBase):
                 cur.execute(_INSERT_SAMPLE, (uuid, version_id, split, label, minio_path))
             conn.commit()
         except Exception as exc:
-            try:
-                self._conn.rollback()
-            except Exception:
-                self._conn = None
+            with self._conn_lock:
+                try:
+                    self._conn.rollback()
+                except Exception:
+                    self._conn = None
             raise DataControllerError(f"Failed to store sample '{uuid}': {exc}") from exc
 
     # ── Data retrieval ────────────────────────────────────────────────────────
@@ -198,10 +199,11 @@ class DatasetController(_DataControllerBase):
             conn.commit()
             return count
         except Exception as exc:
-            try:
-                self._conn.rollback()
-            except Exception:
-                self._conn = None
+            with self._conn_lock:
+                try:
+                    self._conn.rollback()
+                except Exception:
+                    self._conn = None
             raise DataControllerError(
                 f"Failed to copy version '{src_version_id}' → '{dst_version_id}': {exc}"
             ) from exc

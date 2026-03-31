@@ -62,10 +62,11 @@ class AnnotationDataController(_DataControllerBase):
                 cur.execute(_WRITE_LABEL, (label, uuid))
             conn.commit()
         except Exception as exc:
-            try:
-                self._conn.rollback()
-            except Exception:
-                self._conn = None
+            with self._conn_lock:
+                try:
+                    self._conn.rollback()
+                except Exception:
+                    self._conn = None
             raise DataControllerError(f"Failed to write label for '{uuid}': {exc}") from exc
 
     def reset_candidate(self, uuid: UUID) -> None:
@@ -80,8 +81,9 @@ class AnnotationDataController(_DataControllerBase):
                 cur.execute(_RESET_CANDIDATE, (uuid,))
             conn.commit()
         except Exception as exc:
-            try:
-                self._conn.rollback()
-            except Exception:
-                self._conn = None
+            with self._conn_lock:
+                try:
+                    self._conn.rollback()
+                except Exception:
+                    self._conn = None
             raise DataControllerError(f"Failed to reset candidate '{uuid}': {exc}") from exc

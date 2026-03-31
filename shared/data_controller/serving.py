@@ -97,10 +97,11 @@ class ServingDataController(_DataControllerBase):
         except Exception as exc:
             self._failures += 1
             logger.warning(f"Prediction storage failed ({self._failures} total): {exc}")
-            try:
-                self._conn.rollback()
-            except Exception:
-                self._conn = None
+            with self._conn_lock:
+                try:
+                    self._conn.rollback()
+                except Exception:
+                    self._conn = None
 
         if image_2d is not None and self._s3_available:
             try:

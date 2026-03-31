@@ -41,8 +41,9 @@ class SamplingDataController(_DataControllerBase):
             conn.commit()
             return marked
         except Exception as exc:
-            try:
-                self._conn.rollback()
-            except Exception:
-                self._conn = None
+            with self._conn_lock:
+                try:
+                    self._conn.rollback()
+                except Exception:
+                    self._conn = None
             raise DataControllerError(f"Failed to mark candidates: {exc}") from exc

@@ -6,6 +6,7 @@ Base class, shared SQL constants, and error type for all data controllers.
 from __future__ import annotations
 
 import logging
+import threading
 from typing import Any
 
 from shared.schemas.predict_record import PredictRecord
@@ -194,16 +195,18 @@ class _DataControllerBase:
 
         self._psycopg2 = psycopg2
         self._conn: Any = None
+        self._conn_lock = threading.Lock()
         self._dsn = dsn
         self._ensure_schema()
 
     def _connect(self):
-        if self._conn is None or self._conn.closed:
-            self._conn = self._psycopg2.connect(self._dsn)
-            # Register UUID ↔ uuid.UUID adaptation for this connection so that
-            # Python UUID objects are sent as native Postgres UUID values.
-            self._psycopg2.extras.register_uuid(conn_or_curs=self._conn)
-        return self._conn
+        with self._conn_lock:
+            if self._conn is None or self._conn.closed:
+                self._conn = self._psycopg2.connect(self._dsn)
+                # Register UUID ↔ uuid.UUID adaptation for this connection so that
+                # Python UUID objects are sent as native Postgres UUID values.
+                self._psycopg2.extras.register_uuid(conn_or_curs=self._conn)
+            return self._conn
 
     def _ensure_schema(self) -> None:
         """Create both tables if they do not already exist."""

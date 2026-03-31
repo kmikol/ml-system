@@ -3,7 +3,7 @@
 Unit tests for training/main.py pure functions and main() orchestration.
 
 Env vars (MODEL_NAME, TRAINING_*) are set by conftest.py before import.
-External services (DatasetController, ModelArtifactController, pl.Trainer)
+External services (DatasetController, TrainingLogger, pl.Trainer)
 are fully mocked so no Postgres, MLflow, or real training is needed.
 """
 
@@ -20,6 +20,8 @@ import onnxruntime as ort
 import pytest
 import torch
 
+from shared.model_artifact_controller import ModelVersion
+from shared.model_artifact_controller._training_logger import TrainingRun
 from shared.schemas.feature_schema import EMBEDDING_DIM, INPUT_DIM, NUM_CLASSES
 from training.main import compute_reference_distributions, export_onnx, make_dataloaders
 from training.model import Classifier
@@ -210,16 +212,18 @@ def _make_toy_samples(n: int) -> list[dict]:
 
 
 class TestTrainingMain:
-    def _make_mock_controller(self, run_id: str = "test-run-id") -> MagicMock:
-        ctrl = MagicMock()
+    def _make_mock_logger(self, run_id: str = "test-run-id") -> MagicMock:
+        mock_logger = MagicMock()
 
         @contextmanager
-        def fake_start_run(experiment_name):
-            yield run_id
+        def fake_start(experiment_name):
+            yield TrainingRun(run_id)
 
-        ctrl.start_run = fake_start_run
-        ctrl.register_model.return_value = "1"
-        return ctrl
+        mock_logger.start = fake_start
+        mock_logger.register.return_value = ModelVersion(
+            version="1", _model_name="test-model", _run_id=run_id
+        )
+        return mock_logger
 
     def test_raises_when_no_dataset_version(self):
         from training import main as training_main
@@ -229,7 +233,7 @@ class TestTrainingMain:
 
         with (
             patch("training.main.DatasetController", return_value=mock_dataset_ctrl),
-            patch("training.main.ModelArtifactController"),
+            patch("training.main.TrainingLogger"),
             pytest.raises(RuntimeError, match="No dataset version found"),
         ):
             training_main.main()
@@ -245,7 +249,7 @@ class TestTrainingMain:
 
         with (
             patch("training.main.DatasetController", return_value=mock_dataset_ctrl),
-            patch("training.main.ModelArtifactController"),
+            patch("training.main.TrainingLogger"),
             pytest.raises(RuntimeError, match="Dataset split is empty"),
         ):
             training_main.main()
@@ -261,12 +265,12 @@ class TestTrainingMain:
 
         with (
             patch("training.main.DatasetController", return_value=mock_dataset_ctrl),
-            patch("training.main.ModelArtifactController"),
+            patch("training.main.TrainingLogger"),
             pytest.raises(RuntimeError, match="Dataset split is empty"),
         ):
             training_main.main()
 
-    def test_full_pipeline_calls_all_controller_methods(self):
+    def test_full_pipeline_calls_log_and_register(self):
         from training import main as training_main
 
         train_samples = _make_toy_samples(20)
@@ -278,25 +282,22 @@ class TestTrainingMain:
             train_samples if split == "train" else val_samples
         )
 
-        mock_artifact_ctrl = self._make_mock_controller()
+        mock_logger = self._make_mock_logger()
 
         mock_trainer = MagicMock()
         mock_trainer.callback_metrics = {"val_loss": 0.5, "val_acc": 0.8, "val_f1": 0.79}
 
         with (
             patch("training.main.DatasetController", return_value=mock_dataset_ctrl),
-            patch("training.main.ModelArtifactController", return_value=mock_artifact_ctrl),
+            patch("training.main.TrainingLogger", return_value=mock_logger),
             patch("training.main.pl.Trainer", return_value=mock_trainer),
         ):
             training_main.main()
 
-        mock_artifact_ctrl.log_params.assert_called_once()
-        mock_artifact_ctrl.log_metrics.assert_called_once()
-        mock_artifact_ctrl.log_training_outputs.assert_called_once()
-        mock_artifact_ctrl.register_model.assert_called_once()
-        mock_artifact_ctrl.promote_model.assert_called_once()
+        mock_logger.log.assert_called_once()
+        mock_logger.register.assert_called_once()
 
-    def test_full_pipeline_passes_correct_model_name(self):
+    def test_full_pipeline_passes_promote_flag(self):
         from training import main as training_main
 
         train_samples = _make_toy_samples(20)
@@ -308,24 +309,18 @@ class TestTrainingMain:
             train_samples if split == "train" else val_samples
         )
 
-        mock_artifact_ctrl = self._make_mock_controller()
-        mock_artifact_ctrl.register_model.return_value = "42"
+        mock_logger = self._make_mock_logger()
 
         mock_trainer = MagicMock()
         mock_trainer.callback_metrics = {"val_loss": 0.5, "val_acc": 0.8, "val_f1": 0.79}
 
         with (
             patch("training.main.DatasetController", return_value=mock_dataset_ctrl),
-            patch("training.main.ModelArtifactController", return_value=mock_artifact_ctrl),
+            patch("training.main.TrainingLogger", return_value=mock_logger),
             patch("training.main.pl.Trainer", return_value=mock_trainer),
         ):
             training_main.main()
 
-        register_call = mock_artifact_ctrl.register_model.call_args
-        model_name_arg = (
-            register_call[0][1] if register_call[0] else register_call[1].get("model_name")
-        )
-        assert model_name_arg == "test-model"  # from conftest MODEL_NAME env var
-
-        promote_call = mock_artifact_ctrl.promote_model.call_args
-        assert "test-model" in promote_call[0]
+        register_call = mock_logger.register.call_args
+        # AUTO_PROMOTE defaults to True in test env
+        assert register_call[1].get("promote") is True

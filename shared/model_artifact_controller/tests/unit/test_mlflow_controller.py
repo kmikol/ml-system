@@ -267,3 +267,61 @@ class TestDownloadArtifacts:
 
         with pytest.raises(ModelArtifactError, match="run-6"):
             ctrl.download_artifacts("run-6", "onnx", "/tmp/ml_model_xyz")
+
+
+# ── get_run_metrics ──────────────────────────────────────────────────────────
+
+
+class TestGetRunMetrics:
+    def test_returns_metrics_dict(self, ctrl):
+        mock_run = MagicMock()
+        mock_run.data.metrics = {"val_acc": 0.95, "val_loss": 0.05}
+        ctrl._client.get_run.return_value = mock_run
+
+        result = ctrl.get_run_metrics("run-7")
+
+        assert result == {"val_acc": 0.95, "val_loss": 0.05}
+        ctrl._client.get_run.assert_called_once_with("run-7")
+
+    def test_returns_empty_dict_when_no_metrics(self, ctrl):
+        mock_run = MagicMock()
+        mock_run.data.metrics = {}
+        ctrl._client.get_run.return_value = mock_run
+
+        result = ctrl.get_run_metrics("run-7")
+        assert result == {}
+
+    def test_wraps_client_error(self, ctrl):
+        ctrl._client.get_run.side_effect = Exception("run not found")
+
+        with pytest.raises(ModelArtifactError, match="run-7"):
+            ctrl.get_run_metrics("run-7")
+
+
+# ── search_version_by_run ────────────────────────────────────────────────────
+
+
+class TestSearchVersionByRun:
+    def test_returns_version_when_found(self, ctrl):
+        mock_version = MagicMock()
+        mock_version.version = "5"
+        ctrl._client.search_model_versions.return_value = [mock_version]
+
+        result = ctrl.search_version_by_run("my_model", "run-8")
+
+        assert result == "5"
+        ctrl._client.search_model_versions.assert_called_once_with(
+            "name='my_model' and run_id='run-8'"
+        )
+
+    def test_returns_none_when_not_found(self, ctrl):
+        ctrl._client.search_model_versions.return_value = []
+
+        result = ctrl.search_version_by_run("my_model", "run-8")
+        assert result is None
+
+    def test_wraps_client_error(self, ctrl):
+        ctrl._client.search_model_versions.side_effect = Exception("DB error")
+
+        with pytest.raises(ModelArtifactError, match="run-8"):
+            ctrl.search_version_by_run("my_model", "run-8")

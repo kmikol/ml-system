@@ -243,3 +243,46 @@ class MLflowModelArtifactController:
             raise ModelArtifactError(
                 f"Failed to download '{artifact_path}' from run '{run_id}': {exc}"
             ) from exc
+
+    def get_run_metrics(self, run_id: str) -> dict[str, float]:
+        """Return all numeric metrics logged to *run_id*.
+
+        Args:
+            run_id: The run identifier.
+
+        Returns:
+            Dictionary mapping metric names to their float values.
+
+        Raises:
+            ModelArtifactError: If the run cannot be retrieved.
+        """
+        try:
+            run = self._client.get_run(run_id)
+            return {k: float(v) for k, v in run.data.metrics.items()}
+        except Exception as exc:
+            raise ModelArtifactError(
+                f"Failed to get metrics for run '{run_id}': {exc}"
+            ) from exc
+
+    def search_version_by_run(self, model_name: str, run_id: str) -> str | None:
+        """Return the version string registered from *run_id*, or ``None``.
+
+        Args:
+            model_name: Registered model name.
+            run_id: The run identifier to search for.
+
+        Returns:
+            Version string if found, ``None`` otherwise.
+
+        Raises:
+            ModelArtifactError: If the search itself fails.
+        """
+        try:
+            versions = self._client.search_model_versions(
+                f"name='{model_name}' and run_id='{run_id}'"
+            )
+            return versions[0].version if versions else None
+        except Exception as exc:
+            raise ModelArtifactError(
+                f"Failed to search versions for run '{run_id}': {exc}"
+            ) from exc

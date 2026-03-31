@@ -29,10 +29,7 @@ Prerequisites (env vars):
 import logging
 import os
 import sys
-import tempfile
 
-import mlflow
-import mlflow.tracking
 import numpy as np
 import onnxruntime as ort
 
@@ -42,8 +39,9 @@ from shared.config import require_env  # noqa: E402
 from shared.data_controller.dataset import DatasetController  # noqa: E402
 from shared.logging_config import setup_logging  # noqa: E402
 from shared.model_artifact_controller import (  # noqa: E402
-    ModelArtifactController,
     ModelArtifactError,
+    ModelStage,
+    ModelStore,
 )
 
 setup_logging("evaluate-and-promote")
@@ -55,6 +53,13 @@ def _score_on_val_split(classifier_path: str, val_samples: list[dict]) -> float:
 
     Batches all samples into a single ONNX call for efficiency.
     Softmax is computed with the log-sum-exp trick (no scipy needed).
+
+    Args:
+        classifier_path: Path to the ONNX model file.
+        val_samples: List of validation sample dicts with ``image`` and ``label``.
+
+    Returns:
+        Accuracy as a float between 0 and 1.
     """
     images = np.stack([np.array(s["image"]).flatten().astype(np.float32) for s in val_samples])
     labels = np.array([s["label"] for s in val_samples], dtype=np.int64)
@@ -83,56 +88,47 @@ def main() -> int:
 def _main() -> int:
     new_run_id = require_env("NEW_RUN_ID")
     version_id = require_env("VERSION_ID")
-    model_name = require_env("MODEL_NAME")
     min_improvement = float(os.environ.get("MIN_VAL_ACC_IMPROVEMENT", "0.0"))
-    tracking_uri = require_env("MLFLOW_TRACKING_URI")
 
-    mlflow.set_tracking_uri(tracking_uri)
-    client = mlflow.tracking.MlflowClient()
-    controller = ModelArtifactController()
+    store = ModelStore()
 
     # ── Get new run's val_acc ─────────────────────────────────────────────────
     try:
-        new_run = client.get_run(new_run_id)
-        new_val_acc = new_run.data.metrics.get("val_acc", 0.0)
-        logger.info(f"New run {new_run_id}: val_acc={new_val_acc:.4f}")
-    except Exception as exc:
+        new_metrics = store.get_metrics_by_run(new_run_id)
+        new_val_acc = new_metrics.get("val_acc", 0.0)
+    except ModelArtifactError as exc:
         logger.error(f"Could not retrieve new run {new_run_id}: {exc}")
         return 0
+    logger.info(f"New run {new_run_id}: val_acc={new_val_acc:.4f}")
 
-    # ── Get current Production run_id + logged val_acc ────────────────────────
-    prod_run_id: str | None = None
+    # ── Get current Production metrics ────────────────────────────────────────
     prod_val_acc: float | None = None
+    has_production = True
     try:
-        prod_run_id = controller.get_production_run_id(model_name, "Production")
-        prod_run = client.get_run(prod_run_id)
-        prod_val_acc = prod_run.data.metrics.get("val_acc", 0.0)
-        logger.info(f"Current Production run {prod_run_id}: val_acc={prod_val_acc:.4f}")
+        prod_metrics = store.get_metrics(ModelStage.PRODUCTION)
+        prod_val_acc = prod_metrics.get("val_acc", 0.0)
+        logger.info(f"Current Production: val_acc={prod_val_acc:.4f}")
     except ModelArtifactError:
+        has_production = False
         logger.info("No current Production model — will promote unconditionally")
-    except Exception as exc:
-        logger.warning(f"Could not retrieve Production run metrics: {exc}")
 
     # ── Compute baseline: score Production model on the new val split ─────────
-    # Both the new model and the baseline are now scored on the same data,
-    # making the comparison fair even when the dataset changed between versions.
     baseline_val_acc: float | None = None
-    if prod_run_id is not None:
+    if has_production:
         try:
             dataset_ctrl = DatasetController()
             val_samples = dataset_ctrl.get_dataset_split(version_id, "val")
             if not val_samples:
                 logger.warning(f"Val split for {version_id} is empty — skipping baseline")
             else:
-                with tempfile.TemporaryDirectory(prefix="eval_baseline_") as tmpdir:
-                    classifier_path, _, _ = controller.download_serving_bundle(prod_run_id, tmpdir)
-                    baseline_val_acc = _score_on_val_split(classifier_path, val_samples)
+                bundle = store.get_serving_bundle(ModelStage.PRODUCTION)
+                baseline_val_acc = _score_on_val_split(bundle.model_path, val_samples)
 
                 logger.info(
                     f"Baseline: Production model on {version_id} val "
                     f"({len(val_samples)} samples): {baseline_val_acc:.4f}"
                 )
-                client.log_metric(new_run_id, "baseline_val_acc", baseline_val_acc)
+                store.log_metric(new_run_id, "baseline_val_acc", baseline_val_acc)
         except Exception as exc:
             logger.warning(
                 f"Baseline computation failed: {exc}. "
@@ -140,7 +136,7 @@ def _main() -> int:
             )
 
     # ── Promotion decision ────────────────────────────────────────────────────
-    if prod_run_id is None:
+    if not has_production:
         should_promote = True
         reason = "no existing Production model"
     elif baseline_val_acc is not None:
@@ -167,22 +163,21 @@ def _main() -> int:
 
     # ── Find registered version and promote ───────────────────────────────────
     try:
-        versions = client.search_model_versions(f"name='{model_name}' and run_id='{new_run_id}'")
-        if not versions:
+        version = store.get_version_for_run(new_run_id)
+        if version is None:
             logger.warning(
                 f"No registered version found for run {new_run_id}. "
                 "Training may have failed to register — skipping promotion."
             )
             return 0
-        version = versions[0].version
-        logger.info(f"Found registered version {version} for run {new_run_id}")
-    except Exception as exc:
+        logger.info(f"Found registered version {version.version} for run {new_run_id}")
+    except ModelArtifactError as exc:
         logger.error(f"Failed to search model versions: {exc}")
         return 0
 
     try:
-        controller.promote_model(model_name, version)
-        logger.info(f"Promoted {model_name} v{version} → Production")
+        store.promote(version)
+        logger.info(f"Promoted v{version.version} → Production")
     except ModelArtifactError as exc:
         logger.error(f"Promotion failed: {exc}")
 

@@ -7,18 +7,18 @@ metadata:
 data:
   alertmanager.yml: |
     global:
-      resolve_timeout: 5m
+      resolve_timeout: 10m
     route:
       receiver: 'default'
       routes:
         - match:
             alertname: PsiThresholdBreached
           receiver: 'argo-events-webhook'
-          repeat_interval: 1m
+          repeat_interval: 3m
         - match:
             alertname: AnnotationCountReached
           receiver: 'annotation-ready-webhook'
-          repeat_interval: 1m
+          repeat_interval: 3m
     receivers:
       - name: 'default'
       - name: 'argo-events-webhook'

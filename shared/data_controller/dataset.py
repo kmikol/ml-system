@@ -34,6 +34,21 @@ ORDER BY MAX(created_at) DESC
 LIMIT 1;
 """
 
+_SELECT_UNVERSIONED_ANNOTATIONS = """
+SELECT p.uuid, p.annotated_label
+FROM predictions p
+WHERE p.annotation_status = 'annotated'
+  AND p.uuid NOT IN (SELECT uuid FROM dataset_samples);
+"""
+
+_COPY_VERSION = """
+INSERT INTO dataset_samples (uuid, version_id, split, label, minio_path)
+SELECT uuid, %s, split, label, minio_path
+FROM dataset_samples
+WHERE version_id = %s
+ON CONFLICT (uuid, version_id) DO NOTHING;
+"""
+
 
 class DatasetController(_DataControllerBase):
     """Manages versioned dataset samples stored in Postgres (metadata) and MinIO (images).
@@ -145,6 +160,51 @@ class DatasetController(_DataControllerBase):
             }
             for uuid, label, minio_path in rows
         ]
+
+    def get_unversioned_annotations(self) -> list[dict]:
+        """Return annotated predictions not yet included in any dataset version.
+
+        Returns:
+            List of dicts with keys: ``uuid`` (UUID), ``label`` (int).
+        """
+        try:
+            conn = self._connect()
+            with conn.cursor() as cur:
+                cur.execute(_SELECT_UNVERSIONED_ANNOTATIONS)
+                rows = cur.fetchall()
+            return [{"uuid": uuid, "label": label} for uuid, label in rows]
+        except Exception as exc:
+            raise DataControllerError(f"Failed to query unversioned annotations: {exc}") from exc
+
+    def copy_version(self, src_version_id: str, dst_version_id: str) -> int:
+        """Copy all samples from ``src_version_id`` into ``dst_version_id``.
+
+        Pure SQL — no MinIO operations. The ``minio_path`` values are preserved
+        as-is so the new version points to the same objects. Idempotent via
+        ON CONFLICT DO NOTHING.
+
+        Args:
+            src_version_id: Existing version to copy from (e.g. ``'v0'``).
+            dst_version_id: New version to copy into (e.g. ``'v1'``).
+
+        Returns:
+            Number of rows inserted (0 if already fully copied).
+        """
+        try:
+            conn = self._connect()
+            with conn.cursor() as cur:
+                cur.execute(_COPY_VERSION, (dst_version_id, src_version_id))
+                count = cur.rowcount
+            conn.commit()
+            return count
+        except Exception as exc:
+            try:
+                self._conn.rollback()
+            except Exception:
+                self._conn = None
+            raise DataControllerError(
+                f"Failed to copy version '{src_version_id}' → '{dst_version_id}': {exc}"
+            ) from exc
 
     def download_image(self, minio_path: str):
         """Download and deserialize a single image .npy file from MinIO."""

@@ -23,7 +23,7 @@ spec:
   arguments:
     parameters:
       - name: max-samples-to-annotate
-        value: "50"
+        value: "200"
   templates:
     - name: sample-and-label
       steps:

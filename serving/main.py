@@ -241,7 +241,7 @@ async def predict(request: PredictRequest):
         confidence=result["confidence"],
         prediction_distribution=result["prediction_distribution"],
     )
-    data_controller.store_prediction(record)
+    data_controller.store_prediction(record, image_2d=request.image)
 
     return PredictResponse(
         prediction=result["prediction"],

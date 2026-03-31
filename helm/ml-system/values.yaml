@@ -11,6 +11,8 @@ serving:
   env:
     DATA_CONTROLLER_DB_URL: "postgresql://mlflow:mlflow@postgres:5432/mlflow"
     LOKI_URL: "http://loki:3100"
+    DATASET_S3_ENDPOINT_URL: "http://minio:9000"
+    DATASET_BUCKET: "mnist-dataset"
   service:
     type: ClusterIP
   resources:

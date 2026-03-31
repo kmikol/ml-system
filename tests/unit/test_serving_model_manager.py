@@ -250,11 +250,11 @@ def client():
 @pytest.fixture
 def ready_model_with_gaussians():
     """Set model_manager to a ready state WITH class Gaussians for class 3."""
-    original_session = _serving.model_manager.classifier_session
+    original_session = _serving.model_manager.model_session
     original_version = _serving.model_manager.model_version
     original_gaussians = _serving.model_manager.class_gaussians
 
-    _serving.model_manager.classifier_session = MagicMock()
+    _serving.model_manager.model_session = MagicMock()
     _serving.model_manager.model_version = "mock-run-id"
 
     mean = np.zeros(EMBEDDING_DIM, dtype=np.float64)
@@ -271,7 +271,7 @@ def ready_model_with_gaussians():
     with patch.object(_serving.model_manager, "predict", return_value=mock_result):
         yield
 
-    _serving.model_manager.classifier_session = original_session
+    _serving.model_manager.model_session = original_session
     _serving.model_manager.model_version = original_version
     _serving.model_manager.class_gaussians = original_gaussians
 
@@ -279,11 +279,11 @@ def ready_model_with_gaussians():
 @pytest.fixture
 def ready_model_gaussians_missing_class():
     """Gaussians loaded but missing the predicted class key."""
-    original_session = _serving.model_manager.classifier_session
+    original_session = _serving.model_manager.model_session
     original_version = _serving.model_manager.model_version
     original_gaussians = _serving.model_manager.class_gaussians
 
-    _serving.model_manager.classifier_session = MagicMock()
+    _serving.model_manager.model_session = MagicMock()
     _serving.model_manager.model_version = "mock-run-id"
     # No key "3" — the predicted class
     _serving.model_manager.class_gaussians = {
@@ -300,7 +300,7 @@ def ready_model_gaussians_missing_class():
     with patch.object(_serving.model_manager, "predict", return_value=mock_result):
         yield
 
-    _serving.model_manager.classifier_session = original_session
+    _serving.model_manager.model_session = original_session
     _serving.model_manager.model_version = original_version
     _serving.model_manager.class_gaussians = original_gaussians
 

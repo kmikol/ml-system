@@ -23,7 +23,7 @@ from shared.schemas.feature_schema import (
     INPUT_DIM,
     NUM_CLASSES,
 )
-from training.model import Classifier, ClassifierWrapper, EmbedderWrapper, UnifiedWrapper
+from training.model import Classifier, UnifiedWrapper
 
 setup_logging("training")
 logger = logging.getLogger(__name__)

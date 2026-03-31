@@ -83,3 +83,17 @@ class EmbedderWrapper(nn.Module):
 
     def forward(self, x):
         return self.feature_extractor(x)
+
+
+class UnifiedWrapper(nn.Module):
+    """For ONNX export: input → (logits, embedding) as tuple."""
+
+    def __init__(self, model: Classifier):
+        super().__init__()
+        self.feature_extractor = model.feature_extractor
+        self.classifier_head = model.classifier_head
+
+    def forward(self, x):
+        embedding = self.feature_extractor(x)
+        logits = self.classifier_head(embedding)
+        return logits, embedding

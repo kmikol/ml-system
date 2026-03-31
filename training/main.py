@@ -23,7 +23,7 @@ from shared.schemas.feature_schema import (
     INPUT_DIM,
     NUM_CLASSES,
 )
-from training.model import Classifier, ClassifierWrapper, EmbedderWrapper
+from training.model import Classifier, ClassifierWrapper, EmbedderWrapper, UnifiedWrapper
 
 setup_logging("training")
 logger = logging.getLogger(__name__)
@@ -51,50 +51,36 @@ def make_dataloaders(train_samples, val_samples, batch_size):
 
 def export_onnx(model: Classifier, export_dir: str):
     """
-    Export classifier and embedder as ONNX into separate subdirectories.
-    Each subdir is logged to MLflow as a directory artifact, so any
-    companion .data files are included automatically.
+    Export unified model as ONNX that outputs both logits and embeddings.
+    The model is exported to a single subdirectory, and any companion .data
+    files are included automatically when logged to MLflow.
     """
     model.eval()
     dummy = torch.randn(1, INPUT_DIM)
 
-    # ── Classifier ──
-    cls_dir = os.path.join(export_dir, "model")
-    os.makedirs(cls_dir)
-    cls_path = os.path.join(cls_dir, ONNX_FILENAME)
-    wrapper = ClassifierWrapper(model)
+    # ── Unified Model ──
+    model_dir = os.path.join(export_dir, "model")
+    os.makedirs(model_dir)
+    model_path = os.path.join(model_dir, ONNX_FILENAME)
+    wrapper = UnifiedWrapper(model)
     wrapper.eval()
     torch.onnx.export(
         wrapper,
         dummy,
-        cls_path,
+        model_path,
         input_names=["features"],
-        output_names=["logits"],
-        dynamic_axes={"features": {0: "batch"}, "logits": {0: "batch"}},
+        output_names=["logits", "embedding"],
+        dynamic_axes={
+            "features": {0: "batch"},
+            "logits": {0: "batch"},
+            "embedding": {0: "batch"},
+        },
         opset_version=17,
     )
-    onnx.checker.check_model(onnx.load(cls_path, load_external_data=True))
-    logger.info(f"Exported classifier: {os.listdir(cls_dir)}")
+    onnx.checker.check_model(onnx.load(model_path, load_external_data=True))
+    logger.info(f"Exported unified model: {os.listdir(model_dir)}")
 
-    # ── Embedder ──
-    emb_dir = os.path.join(export_dir, "embedder")
-    os.makedirs(emb_dir)
-    emb_path = os.path.join(emb_dir, ONNX_FILENAME)
-    wrapper = EmbedderWrapper(model)
-    wrapper.eval()
-    torch.onnx.export(
-        wrapper,
-        dummy,
-        emb_path,
-        input_names=["features"],
-        output_names=["embedding"],
-        dynamic_axes={"features": {0: "batch"}, "embedding": {0: "batch"}},
-        opset_version=17,
-    )
-    onnx.checker.check_model(onnx.load(emb_path, load_external_data=True))
-    logger.info(f"Exported embedder: {os.listdir(emb_dir)}")
-
-    return cls_dir, emb_dir
+    return model_dir
 
 
 def compute_reference_distributions(model, train_samples):
@@ -217,7 +203,7 @@ def main():
         import tempfile
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            cls_dir, emb_dir = export_onnx(model, tmpdir)
+            model_dir = export_onnx(model, tmpdir)
 
             # ── Reference distributions ──
             refs = compute_reference_distributions(model, train_samples)
@@ -229,8 +215,7 @@ def main():
 
             controller.log_training_outputs(
                 run_id=run_id,
-                classifier_dir=cls_dir,
-                embedder_dir=emb_dir,
+                model_dir=model_dir,
                 reference_distribution=refs["reference_distribution"],
                 class_gaussians=refs["class_gaussians"],
                 feature_schema=feature_schema,

@@ -14,11 +14,9 @@ from shared.config import require_env
 from shared.model_artifact_controller._protocol import ModelArtifactError
 
 _ONNX_ROOT = "onnx"
-_CLASSIFIER_DIR = "classifier"
-_EMBEDDER_DIR = "embedder"
+_MODEL_DIR = "model"
 _ONNX_FILENAME = "model.onnx"
-_MLFLOW_PATH_CLASSIFIER = f"{_ONNX_ROOT}/{_CLASSIFIER_DIR}"
-_MLFLOW_PATH_EMBEDDER = f"{_ONNX_ROOT}/{_EMBEDDER_DIR}"
+_MLFLOW_PATH_MODEL = f"{_ONNX_ROOT}/{_MODEL_DIR}"
 _REFERENCE_DIST_FILENAME = "reference_distribution.json"
 _CLASS_GAUSSIANS_FILENAME = "class_gaussians.json"
 _FEATURE_SCHEMA_FILENAME = "feature_schema.json"
@@ -110,15 +108,13 @@ class MLflowModelArtifactController:
     def log_training_outputs(
         self,
         run_id: str,
-        classifier_dir: str,
-        embedder_dir: str,
+        model_dir: str,
         reference_distribution: dict[str, Any],
         class_gaussians: dict[str, Any],
         feature_schema: dict[str, Any],
     ) -> None:
         """Log canonical training artifacts without leaking path contracts to callers."""
-        self.log_artifacts(run_id, classifier_dir, _MLFLOW_PATH_CLASSIFIER)
-        self.log_artifacts(run_id, embedder_dir, _MLFLOW_PATH_EMBEDDER)
+        self.log_artifacts(run_id, model_dir, _MLFLOW_PATH_MODEL)
 
         with tempfile.TemporaryDirectory(prefix="mlflow_meta_") as tmpdir:
             ref_path = os.path.join(tmpdir, _REFERENCE_DIST_FILENAME)
@@ -138,11 +134,10 @@ class MLflowModelArtifactController:
 
     def download_serving_bundle(
         self, run_id: str, local_dir: str
-    ) -> tuple[str, str, dict[str, Any] | None]:
-        """Return local classifier path, embedder path, and optional class Gaussians payload."""
+    ) -> tuple[str, dict[str, Any] | None]:
+        """Return local model path and optional class Gaussians payload."""
         onnx_dir = self.download_artifacts(run_id, _ONNX_ROOT, local_dir)
-        classifier_path = self._resolve_onnx_path(onnx_dir, _CLASSIFIER_DIR)
-        embedder_path = self._resolve_onnx_path(onnx_dir, _EMBEDDER_DIR)
+        model_path = self._resolve_onnx_path(onnx_dir, _MODEL_DIR)
 
         class_gaussians = None
         try:
@@ -152,7 +147,7 @@ class MLflowModelArtifactController:
         except Exception:
             class_gaussians = None
 
-        return classifier_path, embedder_path, class_gaussians
+        return model_path, class_gaussians
 
     def download_reference_distribution(self, run_id: str, local_dir: str) -> dict[str, Any]:
         """Download and parse the canonical reference distribution JSON for a run."""
@@ -188,13 +183,13 @@ class MLflowModelArtifactController:
         raise FileNotFoundError(f"'{expected}' not found in '{root}'")
 
     def register_model(self, run_id: str, model_name: str) -> str:
-        """Register the classifier ONNX artifact from *run_id* under *model_name*.
+        """Register the unified model ONNX artifact from *run_id* under *model_name*.
 
-        The registered model URI points to the ``onnx/classifier`` subdirectory
+        The registered model URI points to the ``onnx/model`` subdirectory
         of the run's artifacts. Returns the version string assigned by MLflow.
         """
         try:
-            uri = f"runs:/{run_id}/{_MLFLOW_PATH_CLASSIFIER}"
+            uri = f"runs:/{run_id}/{_MLFLOW_PATH_MODEL}"
             result = self._mlflow.register_model(uri, model_name)
             return str(result.version)
         except Exception as exc:

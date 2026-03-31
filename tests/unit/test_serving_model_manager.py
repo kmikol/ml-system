@@ -43,14 +43,10 @@ def _make_embedding() -> np.ndarray:
 
 
 def _mock_sessions(prediction: int = 3):
-    """Return (classifier_session_mock, embedder_session_mock)."""
-    cls_sess = MagicMock()
-    cls_sess.run.return_value = [_make_logits(prediction)]
-
-    emb_sess = MagicMock()
-    emb_sess.run.return_value = [_make_embedding()]
-
-    return cls_sess, emb_sess
+    """Return a unified model session mock."""
+    model_sess = MagicMock()
+    model_sess.run.return_value = [_make_logits(prediction), _make_embedding()]
+    return model_sess
 
 
 @pytest.fixture
@@ -63,10 +59,9 @@ def fresh_manager() -> _serving.ModelManager:
 
 @pytest.fixture
 def ready_manager(fresh_manager) -> _serving.ModelManager:
-    """ModelManager with classifier and embedder sessions loaded."""
-    cls_sess, emb_sess = _mock_sessions(prediction=3)
-    fresh_manager.classifier_session = cls_sess
-    fresh_manager.embedder_session = emb_sess
+    """ModelManager with unified model session loaded."""
+    model_sess = _mock_sessions(prediction=3)
+    fresh_manager.model_session = model_sess
     fresh_manager.model_version = "mock-run-id"
     fresh_manager.class_gaussians = None
     return fresh_manager
@@ -79,12 +74,12 @@ class TestIsReady:
     def test_false_before_load(self, fresh_manager):
         assert fresh_manager.is_ready is False
 
-    def test_true_after_classifier_session_set(self, fresh_manager):
-        fresh_manager.classifier_session = MagicMock()
+    def test_true_after_model_session_set(self, fresh_manager):
+        fresh_manager.model_session = MagicMock()
         assert fresh_manager.is_ready is True
 
     def test_false_after_session_cleared(self, ready_manager):
-        ready_manager.classifier_session = None
+        ready_manager.model_session = None
         assert ready_manager.is_ready is False
 
 
@@ -110,15 +105,14 @@ class TestModelManagerPredict:
 
     def test_prediction_is_argmax(self, fresh_manager):
         for predicted_class in [0, 5, 9]:
-            cls_sess, emb_sess = _mock_sessions(prediction=predicted_class)
-            fresh_manager.classifier_session = cls_sess
-            fresh_manager.embedder_session = emb_sess
+            model_sess = _mock_sessions(prediction=predicted_class)
+            fresh_manager.model_session = model_sess
             result = fresh_manager.predict(np.zeros((1, INPUT_DIM), dtype=np.float32))
             assert result["prediction"] == predicted_class
 
     def test_confidence_matches_softmax(self, ready_manager):
         logits = _make_logits(prediction=3)
-        ready_manager.classifier_session.run.return_value = [logits]
+        ready_manager.model_session.run.return_value = [logits, _make_embedding()]
         result = ready_manager.predict(np.zeros((1, INPUT_DIM), dtype=np.float32))
         expected_probs = softmax(logits[0])
         assert result["confidence"] == pytest.approx(float(expected_probs[3]), abs=1e-5)
@@ -145,7 +139,7 @@ class TestModelManagerPredict:
     def test_passes_features_as_float32_to_sessions(self, ready_manager):
         features = np.ones((1, INPUT_DIM), dtype=np.float64)
         ready_manager.predict(features)
-        call_kwargs = ready_manager.classifier_session.run.call_args[0][1]
+        call_kwargs = ready_manager.model_session.run.call_args[0][1]
         assert call_kwargs["features"].dtype == np.float32
 
 
@@ -175,32 +169,30 @@ class TestLoadFromMlflow:
         assert result is False
 
     def test_sets_model_version_on_success(self, fresh_manager, tmp_path):
-        cls_sess, emb_sess = _mock_sessions()
+        model_sess = _mock_sessions()
         fresh_manager._controller.get_production_run_id.return_value = "run-99"
         fresh_manager._controller.download_serving_bundle.return_value = (
-            str(tmp_path / "cls.onnx"),
-            str(tmp_path / "emb.onnx"),
+            str(tmp_path / "model.onnx"),
             None,
         )
-        with patch("serving.main.ort.InferenceSession", side_effect=[cls_sess, emb_sess]):
+        with patch("serving.main.ort.InferenceSession", return_value=model_sess):
             result = fresh_manager.load_from_mlflow()
         assert result is True
         assert fresh_manager.model_version == "run-99"
 
     def test_sets_class_gaussians_to_none_when_absent(self, fresh_manager, tmp_path):
-        cls_sess, emb_sess = _mock_sessions()
+        model_sess = _mock_sessions()
         fresh_manager._controller.get_production_run_id.return_value = "run-1"
         fresh_manager._controller.download_serving_bundle.return_value = (
             str(tmp_path),
-            str(tmp_path),
             None,  # raw_gaussians=None
         )
-        with patch("serving.main.ort.InferenceSession", side_effect=[cls_sess, emb_sess]):
+        with patch("serving.main.ort.InferenceSession", return_value=model_sess):
             fresh_manager.load_from_mlflow()
         assert fresh_manager.class_gaussians is None
 
     def test_loads_valid_gaussians(self, fresh_manager, tmp_path):
-        cls_sess, emb_sess = _mock_sessions()
+        model_sess = _mock_sessions()
         raw_gaussians = {
             "classes": {
                 "3": {
@@ -215,10 +207,9 @@ class TestLoadFromMlflow:
         fresh_manager._controller.get_production_run_id.return_value = "run-1"
         fresh_manager._controller.download_serving_bundle.return_value = (
             str(tmp_path),
-            str(tmp_path),
             raw_gaussians,
         )
-        with patch("serving.main.ort.InferenceSession", side_effect=[cls_sess, emb_sess]):
+        with patch("serving.main.ort.InferenceSession", return_value=model_sess):
             fresh_manager.load_from_mlflow()
         assert fresh_manager.class_gaussians is not None
         assert "3" in fresh_manager.class_gaussians
@@ -229,16 +220,15 @@ class TestLoadFromMlflow:
         assert g["precision"].shape == (EMBEDDING_DIM, EMBEDDING_DIM)
 
     def test_invalid_gaussians_payload_sets_none(self, fresh_manager, tmp_path):
-        cls_sess, emb_sess = _mock_sessions()
+        model_sess = _mock_sessions()
         # Missing 'classes' key — invalid structure
         raw_gaussians = {"bad_key": {}}
         fresh_manager._controller.get_production_run_id.return_value = "run-1"
         fresh_manager._controller.download_serving_bundle.return_value = (
             str(tmp_path),
-            str(tmp_path),
             raw_gaussians,
         )
-        with patch("serving.main.ort.InferenceSession", side_effect=[cls_sess, emb_sess]):
+        with patch("serving.main.ort.InferenceSession", return_value=model_sess):
             fresh_manager.load_from_mlflow()
         # Invalid payload → scoring disabled (class_gaussians is None)
         assert fresh_manager.class_gaussians is None
@@ -260,11 +250,11 @@ def client():
 @pytest.fixture
 def ready_model_with_gaussians():
     """Set model_manager to a ready state WITH class Gaussians for class 3."""
-    original_session = _serving.model_manager.classifier_session
+    original_session = _serving.model_manager.model_session
     original_version = _serving.model_manager.model_version
     original_gaussians = _serving.model_manager.class_gaussians
 
-    _serving.model_manager.classifier_session = MagicMock()
+    _serving.model_manager.model_session = MagicMock()
     _serving.model_manager.model_version = "mock-run-id"
 
     mean = np.zeros(EMBEDDING_DIM, dtype=np.float64)
@@ -281,7 +271,7 @@ def ready_model_with_gaussians():
     with patch.object(_serving.model_manager, "predict", return_value=mock_result):
         yield
 
-    _serving.model_manager.classifier_session = original_session
+    _serving.model_manager.model_session = original_session
     _serving.model_manager.model_version = original_version
     _serving.model_manager.class_gaussians = original_gaussians
 
@@ -289,11 +279,11 @@ def ready_model_with_gaussians():
 @pytest.fixture
 def ready_model_gaussians_missing_class():
     """Gaussians loaded but missing the predicted class key."""
-    original_session = _serving.model_manager.classifier_session
+    original_session = _serving.model_manager.model_session
     original_version = _serving.model_manager.model_version
     original_gaussians = _serving.model_manager.class_gaussians
 
-    _serving.model_manager.classifier_session = MagicMock()
+    _serving.model_manager.model_session = MagicMock()
     _serving.model_manager.model_version = "mock-run-id"
     # No key "3" — the predicted class
     _serving.model_manager.class_gaussians = {
@@ -310,7 +300,7 @@ def ready_model_gaussians_missing_class():
     with patch.object(_serving.model_manager, "predict", return_value=mock_result):
         yield
 
-    _serving.model_manager.classifier_session = original_session
+    _serving.model_manager.model_session = original_session
     _serving.model_manager.model_version = original_version
     _serving.model_manager.class_gaussians = original_gaussians
 

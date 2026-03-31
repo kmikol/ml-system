@@ -61,16 +61,14 @@ class ModelArtifactController:
     def log_training_outputs(
         self,
         run_id: str,
-        classifier_dir: str,
-        embedder_dir: str,
+        model_dir: str,
         reference_distribution: dict[str, Any],
         class_gaussians: dict[str, Any],
         feature_schema: dict[str, Any],
     ) -> None:
         self._backend.log_training_outputs(
             run_id=run_id,
-            classifier_dir=classifier_dir,
-            embedder_dir=embedder_dir,
+            model_dir=model_dir,
             reference_distribution=reference_distribution,
             class_gaussians=class_gaussians,
             feature_schema=feature_schema,
@@ -90,7 +88,7 @@ class ModelArtifactController:
 
     def download_serving_bundle(
         self, run_id: str, local_dir: str
-    ) -> tuple[str, str, dict[str, Any] | None]:
+    ) -> tuple[str, dict[str, Any] | None]:
         return self._backend.download_serving_bundle(run_id, local_dir)
 
     def download_reference_distribution(self, run_id: str, local_dir: str) -> dict[str, Any]:

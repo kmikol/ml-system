@@ -71,8 +71,7 @@ _mahalanobis_histogram = Histogram(
 
 class ModelManager:
     def __init__(self):
-        self.classifier_session: ort.InferenceSession | None = None
-        self.embedder_session: ort.InferenceSession | None = None
+        self.model_session: ort.InferenceSession | None = None
         self.class_gaussians: dict | None = None
         self.model_version: str | None = None
         self._lock = threading.Lock()
@@ -91,21 +90,19 @@ class ModelManager:
 
         logger.info(f"Downloading artifacts from run {run_id}...")
         try:
-            classifier_path, embedder_path, raw_gaussians = (
-                self._controller.download_serving_bundle(run_id, self._artifact_dir)
+            model_path, raw_gaussians = self._controller.download_serving_bundle(
+                run_id, self._artifact_dir
             )
         except ModelArtifactError as e:
             logger.error(str(e))
             return False
 
-        logger.info(f"Classifier: {classifier_path}")
-        logger.info(f"Embedder:   {embedder_path}")
+        logger.info(f"Model: {model_path}")
 
-        # Load ONNX Runtime sessions
+        # Load ONNX Runtime session
         opts = ort.SessionOptions()
         opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-        new_cls = ort.InferenceSession(classifier_path, opts)
-        new_emb = ort.InferenceSession(embedder_path, opts)
+        new_model = ort.InferenceSession(model_path, opts)
 
         new_gaussians = None
         if raw_gaussians is not None:
@@ -126,8 +123,7 @@ class ModelManager:
             logger.info("class_gaussians unavailable, Mahalanobis scoring disabled.")
 
         with self._lock:
-            self.classifier_session = new_cls
-            self.embedder_session = new_emb
+            self.model_session = new_model
             self.class_gaussians = new_gaussians
             self.model_version = run_id
 
@@ -136,16 +132,12 @@ class ModelManager:
 
     def predict(self, features_array: np.ndarray) -> dict:
         with self._lock:
-            if self.classifier_session is None:
+            if self.model_session is None:
                 raise RuntimeError("Model not loaded")
-            logits = self.classifier_session.run(
-                ["logits"],
+            logits, embedding = self.model_session.run(
+                ["logits", "embedding"],
                 {"features": features_array.astype(np.float32)},
-            )[0]
-            embedding = self.embedder_session.run(
-                ["embedding"],
-                {"features": features_array.astype(np.float32)},
-            )[0]
+            )
 
         probs = softmax(logits[0])
         prediction = int(np.argmax(probs))
@@ -159,7 +151,7 @@ class ModelManager:
 
     @property
     def is_ready(self) -> bool:
-        return self.classifier_session is not None
+        return self.model_session is not None
 
 
 model_manager = ModelManager()

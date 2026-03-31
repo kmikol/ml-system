@@ -13,7 +13,7 @@ import pytest
 from shared.model_artifact_controller import ModelArtifactError
 from shared.model_artifact_controller.mlflow import MLflowModelArtifactController
 
-_MLFLOW_PATH_CLASSIFIER = "onnx/classifier"
+_MLFLOW_PATH_MODEL = "onnx/model"
 
 
 @pytest.fixture
@@ -180,14 +180,14 @@ class TestRegisterModel:
 
         assert version == "3"
 
-    def test_uses_classifier_path_in_uri(self, ctrl):
+    def test_uses_model_path_in_uri(self, ctrl):
         result = MagicMock()
         result.version = 1
         ctrl._mlflow.register_model.return_value = result
 
         ctrl.register_model("run-5", "my_model")
 
-        expected_uri = f"runs:/run-5/{_MLFLOW_PATH_CLASSIFIER}"
+        expected_uri = f"runs:/run-5/{_MLFLOW_PATH_MODEL}"
         ctrl._mlflow.register_model.assert_called_once_with(expected_uri, "my_model")
 
     def test_wraps_client_error(self, ctrl):

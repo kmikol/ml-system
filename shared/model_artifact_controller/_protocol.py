@@ -85,3 +85,11 @@ class ModelArtifactController(Protocol):
     def download_reference_distribution(self, run_id: str, local_dir: str) -> dict[str, Any]:
         """Download and parse reference distribution payload for a run."""
         ...
+
+    def get_run_metrics(self, run_id: str) -> dict[str, float]:
+        """Return all numeric metrics logged to *run_id*."""
+        ...
+
+    def search_version_by_run(self, model_name: str, run_id: str) -> str | None:
+        """Return the version string registered from *run_id*, or ``None``."""
+        ...

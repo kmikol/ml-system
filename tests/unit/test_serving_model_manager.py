@@ -2,7 +2,7 @@
 """
 Unit tests for serving/main.py::ModelManager internals.
 
-Tests ModelManager.predict(), load_from_mlflow(), is_ready, and the
+Tests ModelManager.predict(), load_from_registry(), is_ready, and the
 Mahalanobis scoring path in the /predict endpoint.
 
 All ONNX sessions and external controllers are mocked — no MLflow or GPU needed.
@@ -20,7 +20,12 @@ from fastapi.testclient import TestClient
 from scipy.special import softmax
 
 import serving.main as _serving
-from shared.model_artifact_controller import ModelArtifactError
+from shared.model_artifact_controller import (
+    ClassGaussian,
+    ClassGaussians,
+    ModelArtifactError,
+    ServingBundle,
+)
 
 INPUT_DIM = 196
 EMBEDDING_DIM = 64
@@ -52,8 +57,8 @@ def _mock_sessions(prediction: int = 3):
 
 @pytest.fixture
 def fresh_manager() -> _serving.ModelManager:
-    """Fresh ModelManager with a mocked artifact controller."""
-    with patch("serving.main.ModelArtifactController"):
+    """Fresh ModelManager with a mocked ModelStore."""
+    with patch("serving.main.ModelStore"):
         manager = _serving.ModelManager()
     return manager
 
@@ -242,74 +247,75 @@ class TestPredictShapeValidation:
         assert len(result["embedding"]) == EMBEDDING_DIM
 
 
-# ── ModelManager.load_from_mlflow ─────────────────────────────────────────────
+# ── ModelManager.load_from_registry ───────────────────────────────────────────
 
 
-class TestLoadFromMlflow:
-    def test_returns_false_when_get_run_id_raises(self, fresh_manager):
-        fresh_manager._controller.get_production_run_id.side_effect = ModelArtifactError(
-            "MLflow down"
+class TestLoadFromRegistry:
+    def test_returns_false_when_get_version_id_raises(self, fresh_manager):
+        fresh_manager._store.get_current_version_id.side_effect = ModelArtifactError(
+            "Registry down"
         )
-        result = fresh_manager.load_from_mlflow()
+        result = fresh_manager.load_from_registry()
         assert result is False
 
     def test_returns_true_on_cache_hit(self, fresh_manager):
         fresh_manager.model_version = "run-42"
-        fresh_manager._controller.get_production_run_id.return_value = "run-42"
-        result = fresh_manager.load_from_mlflow()
+        fresh_manager._store.get_current_version_id.return_value = "run-42"
+        result = fresh_manager.load_from_registry()
         assert result is True
 
     def test_returns_false_when_download_raises(self, fresh_manager):
-        fresh_manager._controller.get_production_run_id.return_value = "new-run"
-        fresh_manager._controller.download_serving_bundle.side_effect = ModelArtifactError(
+        fresh_manager._store.get_current_version_id.return_value = "new-run"
+        fresh_manager._store.get_serving_bundle.side_effect = ModelArtifactError(
             "Download failed"
         )
-        result = fresh_manager.load_from_mlflow()
+        result = fresh_manager.load_from_registry()
         assert result is False
 
     def test_sets_model_version_on_success(self, fresh_manager, tmp_path):
         model_sess = _mock_sessions()
-        fresh_manager._controller.get_production_run_id.return_value = "run-99"
-        fresh_manager._controller.download_serving_bundle.return_value = (
-            str(tmp_path / "model.onnx"),
-            None,
+        fresh_manager._store.get_current_version_id.return_value = "run-99"
+        fresh_manager._store.get_serving_bundle.return_value = ServingBundle(
+            model_path=str(tmp_path / "model.onnx"),
+            class_gaussians=None,
         )
         with patch("serving.main.ort.InferenceSession", return_value=model_sess):
-            result = fresh_manager.load_from_mlflow()
+            result = fresh_manager.load_from_registry()
         assert result is True
         assert fresh_manager.model_version == "run-99"
 
     def test_sets_class_gaussians_to_none_when_absent(self, fresh_manager, tmp_path):
         model_sess = _mock_sessions()
-        fresh_manager._controller.get_production_run_id.return_value = "run-1"
-        fresh_manager._controller.download_serving_bundle.return_value = (
-            str(tmp_path),
-            None,  # raw_gaussians=None
+        fresh_manager._store.get_current_version_id.return_value = "run-1"
+        fresh_manager._store.get_serving_bundle.return_value = ServingBundle(
+            model_path=str(tmp_path),
+            class_gaussians=None,
         )
         with patch("serving.main.ort.InferenceSession", return_value=model_sess):
-            fresh_manager.load_from_mlflow()
+            fresh_manager.load_from_registry()
         assert fresh_manager.class_gaussians is None
 
     def test_loads_valid_gaussians(self, fresh_manager, tmp_path):
         model_sess = _mock_sessions()
-        raw_gaussians = {
-            "classes": {
-                "3": {
-                    "mean": [0.0] * EMBEDDING_DIM,
-                    "precision": [
+        gaussians = ClassGaussians(
+            classes={
+                "3": ClassGaussian(
+                    mean=[0.0] * EMBEDDING_DIM,
+                    precision=[
                         [1.0 if i == j else 0.0 for j in range(EMBEDDING_DIM)]
                         for i in range(EMBEDDING_DIM)
                     ],
-                }
+                    num_samples=100,
+                )
             }
-        }
-        fresh_manager._controller.get_production_run_id.return_value = "run-1"
-        fresh_manager._controller.download_serving_bundle.return_value = (
-            str(tmp_path),
-            raw_gaussians,
+        )
+        fresh_manager._store.get_current_version_id.return_value = "run-1"
+        fresh_manager._store.get_serving_bundle.return_value = ServingBundle(
+            model_path=str(tmp_path),
+            class_gaussians=gaussians,
         )
         with patch("serving.main.ort.InferenceSession", return_value=model_sess):
-            fresh_manager.load_from_mlflow()
+            fresh_manager.load_from_registry()
         assert fresh_manager.class_gaussians is not None
         assert "3" in fresh_manager.class_gaussians
         g = fresh_manager.class_gaussians["3"]
@@ -318,20 +324,6 @@ class TestLoadFromMlflow:
         assert g["mean"].shape == (EMBEDDING_DIM,)
         assert g["precision"].shape == (EMBEDDING_DIM, EMBEDDING_DIM)
 
-    def test_invalid_gaussians_payload_sets_none(self, fresh_manager, tmp_path):
-        model_sess = _mock_sessions()
-        # Missing 'classes' key — invalid structure
-        raw_gaussians = {"bad_key": {}}
-        fresh_manager._controller.get_production_run_id.return_value = "run-1"
-        fresh_manager._controller.download_serving_bundle.return_value = (
-            str(tmp_path),
-            raw_gaussians,
-        )
-        with patch("serving.main.ort.InferenceSession", return_value=model_sess):
-            fresh_manager.load_from_mlflow()
-        # Invalid payload → scoring disabled (class_gaussians is None)
-        assert fresh_manager.class_gaussians is None
-
 
 # ── Mahalanobis scoring in /predict endpoint ──────────────────────────────────
 
@@ -339,7 +331,7 @@ class TestLoadFromMlflow:
 @pytest.fixture(scope="module")
 def client():
     with (
-        patch.object(_serving.model_manager, "load_from_mlflow", return_value=False),
+        patch.object(_serving.model_manager, "load_from_registry", return_value=False),
         patch("serving.main.asyncio.sleep", new_callable=AsyncMock),
         TestClient(_serving.app) as c,
     ):

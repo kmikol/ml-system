@@ -22,7 +22,7 @@ from monitoring.ml_exporter.main import (
     compute_psi,
     compute_window_metrics,
 )
-from shared.model_artifact_controller import ModelArtifactError
+from shared.model_artifact_controller import ModelArtifactError, ModelStage, ReferenceDistribution
 from shared.schemas.predict_record import PredictRecord
 
 # ── Fakes ──────────────────────────────────────────────────────────────────────
@@ -30,8 +30,7 @@ from shared.schemas.predict_record import PredictRecord
 
 def _make_config(**overrides: Any) -> ExporterConfig:
     defaults = {
-        "model_name": "test-model",
-        "model_stage": "Production",
+        "model_stage": ModelStage.PRODUCTION,
         "poll_interval": 60,
         "window_seconds": 3600,
     }
@@ -51,25 +50,36 @@ def _make_record(prediction: int = 0, confidence: float = 0.9) -> PredictRecord:
     )
 
 
-class FakeArtifactController:
+class FakeModelStore:
+    """Fake ModelStore for unit testing the DriftPoller."""
+
     def __init__(
         self,
-        run_id: str = "run-1",
-        reference: dict[str, Any] | None = None,
-        fail_get_run_id: bool = False,
+        version_id: str = "run-1",
+        reference: ReferenceDistribution | None = None,
+        fail_get_version_id: bool = False,
         fail_download: bool = False,
     ) -> None:
-        self.run_id = run_id
-        self.reference = reference or {"prediction_class_frequencies": [0.1] * 10}
-        self.fail_get_run_id = fail_get_run_id
+        self.version_id = version_id
+        self.reference = reference or ReferenceDistribution(
+            num_samples=100,
+            pixel_mean=0.5,
+            pixel_std=0.2,
+            embedding_mean=[0.0] * 64,
+            embedding_cov=[[0.0] * 64] * 64,
+            prediction_class_frequencies=[0.1] * 10,
+        )
+        self.fail_get_version_id = fail_get_version_id
         self.fail_download = fail_download
 
-    def get_production_run_id(self, model_name: str, stage: str) -> str:
-        if self.fail_get_run_id:
-            raise ModelArtifactError("MLflow unavailable")
-        return self.run_id
+    def get_current_version_id(self, stage: ModelStage = ModelStage.PRODUCTION) -> str:
+        if self.fail_get_version_id:
+            raise ModelArtifactError("Registry unavailable")
+        return self.version_id
 
-    def download_reference_distribution(self, run_id: str, local_dir: str) -> dict[str, Any]:
+    def get_reference_distribution(
+        self, stage: ModelStage = ModelStage.PRODUCTION
+    ) -> ReferenceDistribution:
         if self.fail_download:
             raise Exception("Download failed")
         return self.reference
@@ -112,16 +122,15 @@ class FakeEmitter:
 def _make_poller(
     config: ExporterConfig | None = None,
     data: FakeDriftDataController | None = None,
-    artifacts: FakeArtifactController | None = None,
+    store: FakeModelStore | None = None,
     emitter: FakeEmitter | None = None,
 ) -> tuple[DriftPoller, FakeEmitter]:
     em = emitter or FakeEmitter()
     poller = DriftPoller(
         config=config or _make_config(),
         data_controller=data or FakeDriftDataController(),
-        artifact_controller=artifacts or FakeArtifactController(),
+        store=store or FakeModelStore(),
         emitter=em,
-        artifact_dir="/tmp",
     )
     return poller, em
 
@@ -217,11 +226,11 @@ class TestComputeWindowMetrics:
 
 class TestDriftPollerObservers:
     def test_current_run_id_is_none_before_poll(self):
-        poller, _ = _make_poller(artifacts=FakeArtifactController(fail_get_run_id=True))
-        assert poller.current_run_id() is None
+        poller, _ = _make_poller(store=FakeModelStore(fail_get_version_id=True))
+        assert poller.current_version_id() is None
 
     def test_reference_loaded_is_false_before_poll(self):
-        poller, _ = _make_poller(artifacts=FakeArtifactController(fail_get_run_id=True))
+        poller, _ = _make_poller(store=FakeModelStore(fail_get_version_id=True))
         assert poller.reference_loaded() is False
 
     def test_poll_age_is_none_before_first_poll(self):
@@ -236,9 +245,9 @@ class TestDriftPollerObservers:
         assert age >= 0.0
 
     def test_current_run_id_set_after_poll(self):
-        poller, _ = _make_poller(artifacts=FakeArtifactController(run_id="my-run"))
+        poller, _ = _make_poller(store=FakeModelStore(version_id="my-run"))
         poller.poll()
-        assert poller.current_run_id() == "my-run"
+        assert poller.current_version_id() == "my-run"
 
     def test_reference_loaded_after_successful_poll(self):
         poller, _ = _make_poller()
@@ -285,8 +294,8 @@ class TestDriftPollerPoll:
 
     def test_emits_with_psi_none_when_reference_unavailable(self):
         data = FakeDriftDataController(records=[_make_record()] * 30)
-        artifacts = FakeArtifactController(fail_get_run_id=True)
-        poller, em = _make_poller(data=data, artifacts=artifacts)
+        artifacts = FakeModelStore(fail_get_version_id=True)
+        poller, em = _make_poller(data=data, store=artifacts)
         poller.poll()
         metrics, _ = em.emitted[0]
         assert metrics.psi is None
@@ -294,46 +303,60 @@ class TestDriftPollerPoll:
     def test_emits_with_psi_when_reference_loaded(self):
         reference = [0.1] * 10
         records = [_make_record(prediction=c) for c in range(10) for _ in range(3)]
-        artifacts = FakeArtifactController(reference={"prediction_class_frequencies": reference})
+        artifacts = FakeModelStore(reference=ReferenceDistribution(
+            num_samples=100,
+            pixel_mean=0.5,
+            pixel_std=0.2,
+            embedding_mean=[0.0] * 64,
+            embedding_cov=[[0.0] * 64] * 64,
+            prediction_class_frequencies=reference,
+        ))
         data = FakeDriftDataController(records=records)
-        poller, em = _make_poller(data=data, artifacts=artifacts)
+        poller, em = _make_poller(data=data, store=artifacts)
         poller.poll()
         metrics, _ = em.emitted[0]
         assert metrics.psi is not None
         assert math.isfinite(metrics.psi)
 
     def test_reloads_reference_when_run_id_changes(self):
-        artifacts = FakeArtifactController(run_id="run-1")
-        poller, em = _make_poller(artifacts=artifacts)
+        artifacts = FakeModelStore(version_id="run-1")
+        poller, em = _make_poller(store=artifacts)
 
         poller.poll()
-        assert poller.current_run_id() == "run-1"
+        assert poller.current_version_id() == "run-1"
 
-        artifacts.run_id = "run-2"
+        artifacts.version_id = "run-2"
         poller.poll()
-        assert poller.current_run_id() == "run-2"
+        assert poller.current_version_id() == "run-2"
         assert len(em.emitted) == 2
 
     def test_uses_cached_reference_when_mlflow_unavailable(self):
         reference = [0.1] * 10
-        artifacts = FakeArtifactController(reference={"prediction_class_frequencies": reference})
+        artifacts = FakeModelStore(reference=ReferenceDistribution(
+            num_samples=100,
+            pixel_mean=0.5,
+            pixel_std=0.2,
+            embedding_mean=[0.0] * 64,
+            embedding_cov=[[0.0] * 64] * 64,
+            prediction_class_frequencies=reference,
+        ))
         records = [_make_record(prediction=c) for c in range(10) for _ in range(3)]
         data = FakeDriftDataController(records=records)
-        poller, em = _make_poller(data=data, artifacts=artifacts)
+        poller, em = _make_poller(data=data, store=artifacts)
 
         # First poll loads reference successfully.
         poller.poll()
         assert poller.reference_loaded() is True
 
         # MLflow goes down — reference should persist.
-        artifacts.fail_get_run_id = True
+        artifacts.fail_get_version_id = True
         poller.poll()
         metrics, _ = em.emitted[1]
         assert metrics.psi is not None  # cached reference still used
 
     def test_reference_download_failure_clears_reference(self):
-        artifacts = FakeArtifactController(fail_download=True)
-        poller, _ = _make_poller(artifacts=artifacts)
+        artifacts = FakeModelStore(fail_download=True)
+        poller, _ = _make_poller(store=artifacts)
         poller.poll()
         # Download failed → reference not loaded, but no exception raised.
         assert poller.reference_loaded() is False

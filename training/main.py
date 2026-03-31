@@ -17,7 +17,14 @@ from torch.utils.data import DataLoader, TensorDataset
 from shared.config import require_env
 from shared.data_controller.dataset import DatasetController
 from shared.logging_config import setup_logging
-from shared.model_artifact_controller import ModelArtifactController
+from shared.model_artifact_controller import (
+    ClassGaussian,
+    ClassGaussians,
+    FeatureSchema,
+    ReferenceDistribution,
+    TrainingArtifacts,
+    TrainingLogger,
+)
 from shared.schemas.feature_schema import (
     EMBEDDING_DIM,
     INPUT_DIM,
@@ -29,7 +36,6 @@ setup_logging("training")
 logger = logging.getLogger(__name__)
 
 # ── All config from env, no defaults ─────────────────────────────
-MODEL_NAME = require_env("MODEL_NAME")
 MAX_EPOCHS = int(require_env("TRAINING_MAX_EPOCHS"))
 SEED = int(require_env("TRAINING_SEED"))
 BATCH_SIZE = int(require_env("TRAINING_BATCH_SIZE"))
@@ -168,36 +174,11 @@ def main():
         deterministic=True,
     )
 
-    controller = ModelArtifactController()
-    with controller.start_run("ml_system_training") as run_id:
-        logger.info(f"Run ID: {run_id}")
-
-        controller.log_params(
-            run_id,
-            {
-                "input_dim": INPUT_DIM,
-                "embedding_dim": EMBEDDING_DIM,
-                "num_classes": NUM_CLASSES,
-                "lr": LR,
-                "batch_size": BATCH_SIZE,
-                "max_epochs": MAX_EPOCHS,
-                "seed": SEED,
-                "train_samples": len(train_samples),
-                "val_samples": len(val_samples),
-            },
-        )
-
+    training_logger = TrainingLogger()
+    with training_logger.start("ml_system_training") as run:
         trainer.fit(model, train_loader, val_loader)
 
         val_metrics = trainer.callback_metrics
-        controller.log_metrics(
-            run_id,
-            {
-                "val_loss": float(val_metrics.get("val_loss", 0)),
-                "val_acc": float(val_metrics.get("val_acc", 0)),
-                "val_f1": float(val_metrics.get("val_f1", 0)),
-            },
-        )
 
         # ── Export ONNX ──
         import tempfile
@@ -207,33 +188,65 @@ def main():
 
             # ── Reference distributions ──
             refs = compute_reference_distributions(model, train_samples)
-            feature_schema = {
-                "image_size": [14, 14],
-                "num_classes": NUM_CLASSES,
-                "input_dim": INPUT_DIM,
-            }
 
-            controller.log_training_outputs(
-                run_id=run_id,
+            artifacts = TrainingArtifacts(
                 model_dir=model_dir,
-                reference_distribution=refs["reference_distribution"],
-                class_gaussians=refs["class_gaussians"],
-                feature_schema=feature_schema,
+                params={
+                    "input_dim": INPUT_DIM,
+                    "embedding_dim": EMBEDDING_DIM,
+                    "num_classes": NUM_CLASSES,
+                    "lr": LR,
+                    "batch_size": BATCH_SIZE,
+                    "max_epochs": MAX_EPOCHS,
+                    "seed": SEED,
+                    "train_samples": len(train_samples),
+                    "val_samples": len(val_samples),
+                },
+                metrics={
+                    "val_loss": float(val_metrics.get("val_loss", 0)),
+                    "val_acc": float(val_metrics.get("val_acc", 0)),
+                    "val_f1": float(val_metrics.get("val_f1", 0)),
+                },
+                reference_distribution=ReferenceDistribution(
+                    num_samples=refs["reference_distribution"]["num_samples"],
+                    pixel_mean=refs["reference_distribution"]["pixel_statistics"]["mean"],
+                    pixel_std=refs["reference_distribution"]["pixel_statistics"]["std"],
+                    embedding_mean=refs["reference_distribution"]["embedding_mean"],
+                    embedding_cov=refs["reference_distribution"]["embedding_cov"],
+                    prediction_class_frequencies=refs["reference_distribution"][
+                        "prediction_class_frequencies"
+                    ],
+                ),
+                class_gaussians=ClassGaussians(
+                    classes={
+                        k: ClassGaussian(
+                            mean=g["mean"],
+                            precision=g["precision"],
+                            num_samples=g["num_samples"],
+                        )
+                        for k, g in refs["class_gaussians"]["classes"].items()
+                    }
+                ),
+                feature_schema=FeatureSchema(
+                    image_size=[14, 14],
+                    num_classes=NUM_CLASSES,
+                    input_dim=INPUT_DIM,
+                ),
             )
+            training_logger.log(run, artifacts)
 
         # ── Register model ──
-        version = controller.register_model(run_id, MODEL_NAME)
-        logger.info(f"Registered version {version}")
+        version = training_logger.register(run, promote=AUTO_PROMOTE)
+        logger.info(f"Registered version {version.version}")
         if AUTO_PROMOTE:
-            controller.promote_model(MODEL_NAME, version)
-            logger.info(f"Version {version} → Production")
+            logger.info(f"Version {version.version} → Production")
         else:
-            logger.info(f"Version {version} registered, promotion deferred to evaluate step")
+            logger.info(f"Version {version.version} registered, promotion deferred to evaluate step")
 
     run_id_output_path = os.environ.get("RUN_ID_OUTPUT_PATH", "")
     if run_id_output_path:
         os.makedirs(os.path.dirname(run_id_output_path) or ".", exist_ok=True)
-        Path(run_id_output_path).write_text(run_id)
+        Path(run_id_output_path).write_text(version._run_id)
         logger.info(f"run_id written to {run_id_output_path}")
 
     logger.info("Done.")

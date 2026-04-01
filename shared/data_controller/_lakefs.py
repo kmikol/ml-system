@@ -9,7 +9,6 @@ directly.  All errors are wrapped in ``DataControllerError``.
 from __future__ import annotations
 
 import logging
-import os
 
 from shared.config import require_env
 from shared.data_controller._base import DataControllerError

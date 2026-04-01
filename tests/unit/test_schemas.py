@@ -7,7 +7,7 @@ No env vars or external services needed — pure Pydantic validation.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+import datetime as dt
 from uuid import UUID, uuid4
 
 import pytest
@@ -141,7 +141,7 @@ class TestInferenceEvent:
     def _make_event(self, **overrides) -> InferenceEvent:
         defaults = {
             "event_id": "evt-1",
-            "timestamp": datetime.now(UTC),
+            "timestamp": dt.datetime.now(dt.UTC),
             "model_version": "run-1",
             "request_id": "req-1",
             "image": _VALID_IMAGE,
@@ -186,7 +186,7 @@ class TestInferenceEvent:
     def test_missing_required_field_raises(self):
         with pytest.raises(ValidationError):
             InferenceEvent(
-                timestamp=datetime.now(UTC),
+                timestamp=dt.datetime.now(dt.UTC),
                 model_version="v1",
                 # missing event_id and other required fields
             )

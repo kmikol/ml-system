@@ -103,7 +103,7 @@ class MinIOObjectStore:
             error_code = resp.get("Error", {}).get("Code", "")
             if error_code in ("404", "NoSuchKey"):
                 return None
-            logger.warning(f"Could not download '{key}': {exc}")
-            return None
+            # For non-not-found errors, propagate as DataControllerError
+            raise DataControllerError(f"Failed to download '{key}': {exc}") from exc
         buf.seek(0)
         return np.load(buf)

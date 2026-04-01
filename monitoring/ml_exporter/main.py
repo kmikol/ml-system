@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import logging
 import math
-import tempfile
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -36,7 +35,7 @@ from prometheus_client import (
 
 from shared.config import require_env
 from shared.data_controller.drift import DriftDataController
-from shared.model_artifact_controller import ModelArtifactController, ModelArtifactError
+from shared.model_artifact_controller import ModelArtifactError, ModelStage, ModelStore
 from shared.schemas.predict_record import PredictRecord
 
 logging.basicConfig(level=logging.INFO)
@@ -55,16 +54,14 @@ _EPS = 1e-6
 
 @dataclass(frozen=True)
 class ExporterConfig:
-    model_name: str
-    model_stage: str
+    model_stage: ModelStage
     poll_interval: int
     window_seconds: int
 
     @classmethod
     def from_env(cls) -> ExporterConfig:
         return cls(
-            model_name=require_env("MODEL_NAME"),
-            model_stage=require_env("MODEL_STAGE"),
+            model_stage=ModelStage(require_env("MODEL_STAGE")),
             poll_interval=int(require_env("DRIFT_POLL_INTERVAL")),
             window_seconds=int(require_env("DRIFT_WINDOW_SECONDS")),
         )
@@ -211,26 +208,24 @@ class DriftPoller:
         self,
         config: ExporterConfig,
         data_controller: Any,
-        artifact_controller: Any,
+        store: Any,
         emitter: MetricsEmitter,
-        artifact_dir: str,
     ) -> None:
         self._config = config
         self._data = data_controller
-        self._artifacts = artifact_controller
+        self._store = store
         self._emitter = emitter
-        self._artifact_dir = artifact_dir
 
         self._lock = threading.Lock()
-        self._current_run_id: str | None = None
+        self._current_version_id: str | None = None
         self._ref_class_freq: list[float] | None = None
         self._last_poll_ts: float = 0.0
 
     # ── Public observers ───────────────────────────────────────────────────────
 
-    def current_run_id(self) -> str | None:
+    def current_version_id(self) -> str | None:
         with self._lock:
-            return self._current_run_id
+            return self._current_version_id
 
     def reference_loaded(self) -> bool:
         with self._lock:
@@ -288,26 +283,26 @@ class DriftPoller:
 
     def _maybe_reload_reference(self) -> None:
         try:
-            run_id = self._artifacts.get_production_run_id(
-                self._config.model_name, self._config.model_stage
-            )
+            version_id = self._store.get_current_version_id(self._config.model_stage)
             with self._lock:
-                if run_id != self._current_run_id:
-                    logger.info(f"Model version changed: {self._current_run_id} → {run_id}")
-                    ref = self._load_reference(run_id)
-                    self._current_run_id = run_id
+                if version_id != self._current_version_id:
+                    logger.info(
+                        f"Model version changed: {self._current_version_id} → {version_id}"
+                    )
+                    ref = self._load_reference()
+                    self._current_version_id = version_id
                     self._ref_class_freq = ref
         except ModelArtifactError as e:
-            logger.warning(f"MLflow unavailable, using cached reference: {e}")
+            logger.warning(f"Model registry unavailable, using cached reference: {e}")
 
-    def _load_reference(self, run_id: str) -> list[float] | None:
+    def _load_reference(self) -> list[float] | None:
         try:
-            data = self._artifacts.download_reference_distribution(run_id, self._artifact_dir)
-            freqs = data["prediction_class_frequencies"]
-            logger.info(f"Reference distribution loaded from run {run_id}: {freqs}")
+            ref = self._store.get_reference_distribution(self._config.model_stage)
+            freqs = ref.prediction_class_frequencies
+            logger.info(f"Reference distribution loaded: {freqs}")
             return freqs
         except Exception as e:
-            logger.warning(f"Failed to load reference distribution from run {run_id}: {e}")
+            logger.warning(f"Failed to load reference distribution: {e}")
             return None
 
 
@@ -338,13 +333,11 @@ def _age_updater(poller: DriftPoller, emitter: MetricsEmitter) -> None:
 async def lifespan(app: FastAPI):
     config = ExporterConfig.from_env()
     emitter = PrometheusEmitter()
-    artifact_dir = tempfile.mkdtemp(prefix="ml_exporter_")
     poller = DriftPoller(
         config=config,
         data_controller=DriftDataController(),
-        artifact_controller=ModelArtifactController(),
+        store=ModelStore(),
         emitter=emitter,
-        artifact_dir=artifact_dir,
     )
 
     app.state.poller = poller
@@ -356,7 +349,7 @@ async def lifespan(app: FastAPI):
 
     logger.info(
         f"ML exporter started — poll_interval={config.poll_interval}s "
-        f"window={config.window_seconds}s model={config.model_name}/{config.model_stage}"
+        f"window={config.window_seconds}s stage={config.model_stage.value}"
     )
     yield
     logger.info("ML exporter shutting down.")
@@ -374,7 +367,7 @@ async def health(request: Request):
         status_code=200,
         content={
             "status": "healthy",
-            "model_run_id": poller.current_run_id(),
+            "model_version_id": poller.current_version_id(),
             "reference_loaded": poller.reference_loaded(),
             "last_poll_age_seconds": round(age, 1) if age is not None else None,
             "poll_interval": config.poll_interval,

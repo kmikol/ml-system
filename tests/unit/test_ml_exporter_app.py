@@ -24,6 +24,7 @@ from monitoring.ml_exporter.main import (
     WindowMetrics,
     app,
 )
+from shared.model_artifact_controller import ModelStage
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -45,19 +46,16 @@ def _make_metrics(n: int = 50, psi: float | None = 0.05) -> WindowMetrics:
 
 class TestExporterConfigFromEnv:
     def test_reads_all_env_vars(self, monkeypatch):
-        monkeypatch.setenv("MODEL_NAME", "my-model")
-        monkeypatch.setenv("MODEL_STAGE", "Staging")
+        monkeypatch.setenv("MODEL_STAGE", "Production")
         monkeypatch.setenv("DRIFT_POLL_INTERVAL", "30")
         monkeypatch.setenv("DRIFT_WINDOW_SECONDS", "7200")
         cfg = ExporterConfig.from_env()
-        assert cfg.model_name == "my-model"
-        assert cfg.model_stage == "Staging"
+        assert cfg.model_stage == ModelStage.PRODUCTION
         assert cfg.poll_interval == 30
         assert cfg.window_seconds == 7200
 
     def test_exits_when_env_var_missing(self, monkeypatch):
         monkeypatch.delenv("DRIFT_POLL_INTERVAL", raising=False)
-        monkeypatch.setenv("MODEL_NAME", "m")
         monkeypatch.setenv("MODEL_STAGE", "Production")
         monkeypatch.setenv("DRIFT_WINDOW_SECONDS", "3600")
         with pytest.raises(SystemExit):
@@ -146,21 +144,20 @@ def test_client_with_state(monkeypatch):
     # MODEL_NAME / MODEL_STAGE / MLFLOW_TRACKING_URI already set by conftest.py
 
     mock_poller = MagicMock()
-    mock_poller.current_run_id.return_value = "run-42"
+    mock_poller.current_version_id.return_value = "run-42"
     mock_poller.reference_loaded.return_value = True
     mock_poller.poll_age.return_value = 5.3
 
     mock_emitter = PrometheusEmitter()
     mock_config = ExporterConfig(
-        model_name="test-model",
-        model_stage="Production",
+        model_stage=ModelStage.PRODUCTION,
         poll_interval=60,
         window_seconds=3600,
     )
 
     with (
         patch("monitoring.ml_exporter.main.DriftDataController"),
-        patch("monitoring.ml_exporter.main.ModelArtifactController"),
+        patch("monitoring.ml_exporter.main.ModelStore"),
         patch("monitoring.ml_exporter.main.threading.Thread"),
         TestClient(app, raise_server_exceptions=True) as client,
     ):
@@ -182,7 +179,7 @@ class TestHealthEndpoint:
         body = client.get("/health").json()
         for field in [
             "status",
-            "model_run_id",
+            "model_version_id",
             "reference_loaded",
             "last_poll_age_seconds",
             "poll_interval",
@@ -198,7 +195,7 @@ class TestHealthEndpoint:
     def test_reflects_poller_state(self, test_client_with_state):
         client, mock_poller = test_client_with_state
         body = client.get("/health").json()
-        assert body["model_run_id"] == "run-42"
+        assert body["model_version_id"] == "run-42"
         assert body["reference_loaded"] is True
         assert body["last_poll_age_seconds"] == pytest.approx(5.3, abs=0.1)
 

@@ -6,7 +6,6 @@ Usage: uvicorn serving.main:app --host 0.0.0.0 --port 8000
 
 import asyncio
 import logging
-import tempfile
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -24,7 +23,7 @@ from scipy.special import softmax
 from shared.config import require_env
 from shared.data_controller.serving import ServingDataController
 from shared.logging_config import setup_logging
-from shared.model_artifact_controller import ModelArtifactController, ModelArtifactError
+from shared.model_artifact_controller import ModelArtifactError, ModelStage, ModelStore
 from shared.schemas.api import (
     HealthResponse,
     PredictRequest,
@@ -38,8 +37,7 @@ setup_logging("serving")
 logger = logging.getLogger(__name__)
 
 # ── All config from env, no defaults ─────────────────────────────
-MODEL_NAME = require_env("MODEL_NAME")
-MODEL_STAGE = require_env("MODEL_STAGE")
+MODEL_STAGE = ModelStage(require_env("MODEL_STAGE"))
 POLL_INTERVAL = int(require_env("SERVING_MODEL_POLL_INTERVAL"))
 SIMULATED_LATENCY_S = int(require_env("SERVING_SIMULATED_LATENCY_MS")) / 1000.0
 # Semaphore caps concurrency to 1. At 333ms service time this saturates at ~3 RPS.
@@ -75,44 +73,41 @@ class ModelManager:
         self.class_gaussians: dict | None = None
         self.model_version: str | None = None
         self._lock = threading.Lock()
-        self._artifact_dir = tempfile.mkdtemp(prefix="ml_model_")
-        self._controller = ModelArtifactController()
+        self._store = ModelStore()
 
-    def load_from_mlflow(self) -> bool:
+    def load_from_registry(self) -> bool:
         try:
-            run_id = self._controller.get_production_run_id(MODEL_NAME, MODEL_STAGE)
+            version_id = self._store.get_current_version_id(MODEL_STAGE)
         except ModelArtifactError as e:
             logger.warning(str(e))
             return False
 
-        if self.model_version == run_id:
+        if self.model_version == version_id:
             return True
 
-        logger.info(f"Downloading artifacts from run {run_id}...")
+        logger.info(f"Downloading model for stage {MODEL_STAGE.value}...")
         try:
-            model_path, raw_gaussians = self._controller.download_serving_bundle(
-                run_id, self._artifact_dir
-            )
+            bundle = self._store.get_serving_bundle(MODEL_STAGE, include_gaussians=True)
         except ModelArtifactError as e:
             logger.error(str(e))
             return False
 
-        logger.info(f"Model: {model_path}")
+        logger.info(f"Model: {bundle.model_path}")
 
         # Load ONNX Runtime session
         opts = ort.SessionOptions()
         opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-        new_model = ort.InferenceSession(model_path, opts)
+        new_model = ort.InferenceSession(bundle.model_path, opts)
 
         new_gaussians = None
-        if raw_gaussians is not None:
+        if bundle.class_gaussians is not None:
             try:
                 new_gaussians = {
                     cls_key: {
-                        "mean": np.array(g["mean"], dtype=np.float64),
-                        "precision": np.array(g["precision"], dtype=np.float64),
+                        "mean": np.array(g.mean, dtype=np.float64),
+                        "precision": np.array(g.precision, dtype=np.float64),
                     }
-                    for cls_key, g in raw_gaussians["classes"].items()
+                    for cls_key, g in bundle.class_gaussians.classes.items()
                 }
                 logger.info("class_gaussians loaded for Mahalanobis scoring.")
             except Exception as e:
@@ -125,9 +120,9 @@ class ModelManager:
         with self._lock:
             self.model_session = new_model
             self.class_gaussians = new_gaussians
-            self.model_version = run_id
+            self.model_version = version_id
 
-        logger.info(f"Model loaded: {run_id}")
+        logger.info(f"Model loaded: {version_id}")
         return True
 
     def predict(self, features_array: np.ndarray) -> dict:
@@ -176,7 +171,7 @@ def poll_model_registry():
     while True:
         time.sleep(POLL_INTERVAL)
         try:
-            model_manager.load_from_mlflow()
+            model_manager.load_from_registry()
         except Exception as e:
             logger.error(f"Model poll failed: {e}")
 
@@ -184,7 +179,7 @@ def poll_model_registry():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     for attempt in range(5):
-        if model_manager.load_from_mlflow():
+        if model_manager.load_from_registry():
             break
         logger.warning(f"Model load attempt {attempt + 1}/5 failed, retrying in 5s...")
         await asyncio.sleep(5)

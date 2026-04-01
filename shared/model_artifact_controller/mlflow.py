@@ -260,9 +260,7 @@ class MLflowModelArtifactController:
             run = self._client.get_run(run_id)
             return {k: float(v) for k, v in run.data.metrics.items()}
         except Exception as exc:
-            raise ModelArtifactError(
-                f"Failed to get metrics for run '{run_id}': {exc}"
-            ) from exc
+            raise ModelArtifactError(f"Failed to get metrics for run '{run_id}': {exc}") from exc
 
     def search_version_by_run(self, model_name: str, run_id: str) -> str | None:
         """Return the version string registered from *run_id*, or ``None``.

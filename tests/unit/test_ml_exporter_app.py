@@ -21,10 +21,10 @@ from monitoring.ml_exporter.main import (
     _PSI_SENTINEL,
     ExporterConfig,
     PrometheusEmitter,
+    VersionPsiResult,
     WindowMetrics,
     app,
 )
-from shared.model_artifact_controller import ModelStage
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -46,18 +46,18 @@ def _make_metrics(n: int = 50, psi: float | None = 0.05) -> WindowMetrics:
 
 class TestExporterConfigFromEnv:
     def test_reads_all_env_vars(self, monkeypatch):
-        monkeypatch.setenv("MODEL_STAGE", "Production")
         monkeypatch.setenv("DRIFT_POLL_INTERVAL", "30")
         monkeypatch.setenv("DRIFT_WINDOW_SECONDS", "7200")
+        monkeypatch.setenv("REFERENCE_CACHE_TTL_SECONDS", "300")
         cfg = ExporterConfig.from_env()
-        assert cfg.model_stage == ModelStage.PRODUCTION
         assert cfg.poll_interval == 30
         assert cfg.window_seconds == 7200
+        assert cfg.reference_cache_ttl_seconds == 300
 
     def test_exits_when_env_var_missing(self, monkeypatch):
         monkeypatch.delenv("DRIFT_POLL_INTERVAL", raising=False)
-        monkeypatch.setenv("MODEL_STAGE", "Production")
         monkeypatch.setenv("DRIFT_WINDOW_SECONDS", "3600")
+        monkeypatch.setenv("REFERENCE_CACHE_TTL_SECONDS", "300")
         with pytest.raises(SystemExit):
             ExporterConfig.from_env()
 
@@ -76,12 +76,12 @@ class TestPrometheusEmitter:
         assert "text/plain" in content_type
 
     def test_emit_sets_sample_count(self, emitter):
-        emitter.emit(_make_metrics(n=42), annotated_count=0)
+        emitter.emit(_make_metrics(n=42), annotated_count=0, version_psi_results=[])
         data, _ = emitter.generate_metrics()
         assert b"drift_window_sample_count 42.0" in data
 
     def test_emit_includes_all_metric_names(self, emitter):
-        emitter.emit(_make_metrics(), annotated_count=5)
+        emitter.emit(_make_metrics(), annotated_count=5, version_psi_results=[])
         data, _ = emitter.generate_metrics()
         for name in [
             b"drift_window_sample_count",
@@ -94,18 +94,26 @@ class TestPrometheusEmitter:
             assert name in data, f"Metric {name!r} missing from output"
 
     def test_emit_psi_sentinel_when_psi_none(self, emitter):
-        emitter.emit(_make_metrics(psi=None), annotated_count=0)
+        emitter.emit(
+            _make_metrics(psi=None),
+            annotated_count=0,
+            version_psi_results=[VersionPsiResult(version="run-A", psi=None, n=50)],
+        )
         data, _ = emitter.generate_metrics()
         sentinel_bytes = str(_PSI_SENTINEL).encode()
         assert sentinel_bytes in data
 
     def test_emit_psi_actual_value(self, emitter):
-        emitter.emit(_make_metrics(psi=0.123), annotated_count=0)
+        emitter.emit(
+            _make_metrics(psi=0.123),
+            annotated_count=0,
+            version_psi_results=[VersionPsiResult(version="run-A", psi=0.123, n=50)],
+        )
         data, _ = emitter.generate_metrics()
         assert b"0.123" in data
 
     def test_emit_annotated_count(self, emitter):
-        emitter.emit(_make_metrics(), annotated_count=17)
+        emitter.emit(_make_metrics(), annotated_count=17, version_psi_results=[])
         data, _ = emitter.generate_metrics()
         assert b"annotation_annotated_count 17.0" in data
 
@@ -115,12 +123,12 @@ class TestPrometheusEmitter:
         assert b"drift_last_poll_age_seconds 42.5" in data
 
     def test_confidence_mean_emitted(self, emitter):
-        emitter.emit(_make_metrics(n=50), annotated_count=0)
+        emitter.emit(_make_metrics(n=50), annotated_count=0, version_psi_results=[])
         data, _ = emitter.generate_metrics()
         assert b"drift_window_confidence_mean 0.85" in data
 
     def test_class_labels_present_in_output(self, emitter):
-        emitter.emit(_make_metrics(), annotated_count=0)
+        emitter.emit(_make_metrics(), annotated_count=0, version_psi_results=[])
         data, _ = emitter.generate_metrics()
         for c in range(10):
             assert f'class_label="{c}"'.encode() in data
@@ -141,18 +149,19 @@ def test_client_with_state(monkeypatch):
     """
     monkeypatch.setenv("DRIFT_POLL_INTERVAL", "60")
     monkeypatch.setenv("DRIFT_WINDOW_SECONDS", "3600")
-    # MODEL_NAME / MODEL_STAGE / MLFLOW_TRACKING_URI already set by conftest.py
+    monkeypatch.setenv("REFERENCE_CACHE_TTL_SECONDS", "300")
+    # MODEL_NAME / MLFLOW_TRACKING_URI already set by conftest.py
 
     mock_poller = MagicMock()
-    mock_poller.current_version_id.return_value = "run-42"
+    mock_poller.known_versions.return_value = ["run-42"]
     mock_poller.reference_loaded.return_value = True
     mock_poller.poll_age.return_value = 5.3
 
     mock_emitter = PrometheusEmitter()
     mock_config = ExporterConfig(
-        model_stage=ModelStage.PRODUCTION,
         poll_interval=60,
         window_seconds=3600,
+        reference_cache_ttl_seconds=300,
     )
 
     with (
@@ -179,7 +188,7 @@ class TestHealthEndpoint:
         body = client.get("/health").json()
         for field in [
             "status",
-            "model_version_id",
+            "known_model_versions",
             "reference_loaded",
             "last_poll_age_seconds",
             "poll_interval",
@@ -195,7 +204,7 @@ class TestHealthEndpoint:
     def test_reflects_poller_state(self, test_client_with_state):
         client, mock_poller = test_client_with_state
         body = client.get("/health").json()
-        assert body["model_version_id"] == "run-42"
+        assert body["known_model_versions"] == ["run-42"]
         assert body["reference_loaded"] is True
         assert body["last_poll_age_seconds"] == pytest.approx(5.3, abs=0.1)
 
@@ -234,6 +243,8 @@ class TestMetricsEndpoint:
     def test_body_contains_metric_after_emit(self, test_client_with_state):
         client, _ = test_client_with_state
         # Emit some data into the emitter
-        client.app.state.emitter.emit(_make_metrics(n=100), annotated_count=3)
+        client.app.state.emitter.emit(
+            _make_metrics(n=100), annotated_count=3, version_psi_results=[]
+        )
         resp = client.get("/metrics")
         assert b"drift_window_sample_count" in resp.content

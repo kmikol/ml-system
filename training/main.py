@@ -241,7 +241,9 @@ def main():
         if AUTO_PROMOTE:
             logger.info(f"Version {version.version} → Production")
         else:
-            logger.info(f"Version {version.version} registered, promotion deferred to evaluate step")
+            logger.info(
+                f"Version {version.version} registered, promotion deferred to evaluate step"
+            )
 
     run_id_output_path = os.environ.get("RUN_ID_OUTPUT_PATH", "")
     if run_id_output_path:

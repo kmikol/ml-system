@@ -382,7 +382,7 @@ class DatasetController(_DataControllerBase):
 
         manifest_path = f"manifests/{version_id}.json"
         manifest_bytes = json.dumps(manifest, indent=2, sort_keys=True).encode()
-        tag_name = f"dataset/{version_id}"
+        tag_name = f"dataset-{version_id}"
 
         # 2. Upload manifest to lakeFS
         self._lakefs.put_object(

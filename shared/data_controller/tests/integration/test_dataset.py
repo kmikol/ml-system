@@ -193,7 +193,7 @@ class TestDatasetControllerLakeFSVersioning:
         assert info is not None
         assert info["version_id"] == version
         assert info["lakefs_commit_id"] == commit_id
-        assert info["lakefs_tag"] == f"dataset/{version}"
+        assert info["lakefs_tag"] == f"dataset-{version}"
         assert info["sample_count"] == 2
         assert info["parent_version_id"] is None
 

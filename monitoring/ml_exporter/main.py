@@ -403,13 +403,10 @@ class DriftPoller:
             )
             if vmetrics.psi is None:
                 if ref is None:
-                    logger.warning(
-                        f"Version {version}: reference unavailable, skipping PSI."
-                    )
+                    logger.warning(f"Version {version}: reference unavailable, skipping PSI.")
                 else:
                     logger.info(
-                        f"Version {version}: n={vmetrics.n} < {_MIN_SAMPLES},"
-                        " PSI set to sentinel."
+                        f"Version {version}: n={vmetrics.n} < {_MIN_SAMPLES}, PSI set to sentinel."
                     )
             else:
                 logger.info(f"Version {version}: n={vmetrics.n} PSI={vmetrics.psi:.4f}")

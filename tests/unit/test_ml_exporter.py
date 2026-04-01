@@ -326,7 +326,9 @@ class TestDriftPollerPoll:
         assert version_psi_results[0].psi is None
 
     def test_emits_with_psi_when_reference_loaded(self):
-        records = [_make_record(prediction=c, model_version="v1") for c in range(10) for _ in range(3)]
+        records = [
+            _make_record(prediction=c, model_version="v1") for c in range(10) for _ in range(3)
+        ]
         store = FakeModelStore(reference=_make_reference([0.1] * 10))
         data = FakeDriftDataController(records=records)
         poller, em = _make_poller(data=data, store=store)
@@ -337,8 +339,12 @@ class TestDriftPollerPoll:
         assert math.isfinite(version_psi_results[0].psi)
 
     def test_reloads_reference_when_version_appears_in_window(self):
-        records_v1 = [_make_record(prediction=c, model_version="v1") for c in range(10) for _ in range(3)]
-        records_v2 = [_make_record(prediction=c, model_version="v2") for c in range(10) for _ in range(3)]
+        records_v1 = [
+            _make_record(prediction=c, model_version="v1") for c in range(10) for _ in range(3)
+        ]
+        records_v2 = [
+            _make_record(prediction=c, model_version="v2") for c in range(10) for _ in range(3)
+        ]
         store = FakeModelStore()
         # First poll: only v1 in window.
         data = FakeDriftDataController(records=records_v1)
@@ -353,7 +359,9 @@ class TestDriftPollerPoll:
         assert len(em.emitted) == 2
 
     def test_uses_cached_reference_when_store_unavailable(self):
-        records = [_make_record(prediction=c, model_version="v1") for c in range(10) for _ in range(3)]
+        records = [
+            _make_record(prediction=c, model_version="v1") for c in range(10) for _ in range(3)
+        ]
         store = FakeModelStore(reference=_make_reference([0.1] * 10))
         data = FakeDriftDataController(records=records)
         poller, em = _make_poller(data=data, store=store)
@@ -414,9 +422,7 @@ class TestMultiVersionWindow:
             _make_record(prediction=c, model_version="v1") for c in range(10) for _ in range(3)
         ]
         # v2: all class 0 → high PSI
-        records_v2 = [
-            _make_record(prediction=0, model_version="v2") for _ in range(30)
-        ]
+        records_v2 = [_make_record(prediction=0, model_version="v2") for _ in range(30)]
         store = FakeModelStore(reference=_make_reference([0.1] * 10))
         data = FakeDriftDataController(records=records_v1 + records_v2)
         poller, em = _make_poller(data=data, store=store)
@@ -465,7 +471,9 @@ class TestMultiVersionWindow:
 class TestReferenceCache:
     def test_cache_hit_avoids_refetch(self):
         """After the first fetch, same-version subsequent polls must not re-fetch."""
-        records = [_make_record(prediction=c, model_version="v1") for c in range(10) for _ in range(3)]
+        records = [
+            _make_record(prediction=c, model_version="v1") for c in range(10) for _ in range(3)
+        ]
         data = FakeDriftDataController(records=records)
         store = FakeModelStore()
         poller, _ = _make_poller(
@@ -482,7 +490,9 @@ class TestReferenceCache:
 
     def test_cache_expiry_triggers_refetch(self):
         """A TTL of 0 seconds means every poll re-fetches the reference."""
-        records = [_make_record(prediction=c, model_version="v1") for c in range(10) for _ in range(3)]
+        records = [
+            _make_record(prediction=c, model_version="v1") for c in range(10) for _ in range(3)
+        ]
         data = FakeDriftDataController(records=records)
         store = FakeModelStore()
         poller, _ = _make_poller(

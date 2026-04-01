@@ -234,9 +234,15 @@ spec:
           - name: LAKEFS_ENDPOINT_URL
             value: "http://lakefs.ml-system.svc.cluster.local:8000"
           - name: LAKEFS_ACCESS_KEY_ID
-            value: "AKIAIOSFODNN7EXAMPLE"
+            valueFrom:
+              secretKeyRef:
+                name: lakefs-credentials
+                key: accessKeyId
           - name: LAKEFS_SECRET_ACCESS_KEY
-            value: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+            valueFrom:
+              secretKeyRef:
+                name: lakefs-credentials
+                key: secretAccessKey
           - name: LAKEFS_REPO
             value: "ml-system-datasets"
           - name: NEW_RUN_ID

@@ -23,7 +23,7 @@ from monitoring.ml_exporter.main import (
     compute_psi,
     compute_window_metrics,
 )
-from shared.model_artifact_controller import ModelArtifactError, ModelStage, ReferenceDistribution
+from shared.model_artifact_controller import ReferenceDistribution
 from shared.model_artifact_controller.types import VersionArtifacts
 from shared.schemas.predict_record import PredictRecord
 
@@ -32,7 +32,6 @@ from shared.schemas.predict_record import PredictRecord
 
 def _make_config(**overrides: Any) -> ExporterConfig:
     defaults = {
-        "model_stage": ModelStage.PRODUCTION,
         "poll_interval": 60,
         "window_seconds": 3600,
         "reference_cache_ttl_seconds": 300,
@@ -73,29 +72,13 @@ class FakeModelStore:
 
     def __init__(
         self,
-        version_id: str = "run-1",
         reference: ReferenceDistribution | None = None,
-        fail_get_version_id: bool = False,
         fail_download: bool = False,
     ) -> None:
-        self.version_id = version_id
         self.reference = reference or _make_reference()
-        self.fail_get_version_id = fail_get_version_id
         self.fail_download = fail_download
         # Track how many times each version was fetched.
         self.fetch_counts: dict[str, int] = {}
-
-    def get_current_version_id(self, stage: ModelStage = ModelStage.PRODUCTION) -> str:
-        if self.fail_get_version_id:
-            raise ModelArtifactError("Registry unavailable")
-        return self.version_id
-
-    def get_reference_distribution(
-        self, stage: ModelStage = ModelStage.PRODUCTION
-    ) -> ReferenceDistribution:
-        if self.fail_download:
-            raise Exception("Download failed")
-        return self.reference
 
     def get_version_artifacts(
         self,
@@ -261,12 +244,12 @@ class TestComputeWindowMetrics:
 
 
 class TestDriftPollerObservers:
-    def test_current_run_id_is_none_before_poll(self):
-        poller, _ = _make_poller(store=FakeModelStore(fail_get_version_id=True))
-        assert poller.current_version_id() is None
+    def test_known_versions_is_empty_before_poll(self):
+        poller, _ = _make_poller()
+        assert poller.known_versions() == []
 
     def test_reference_loaded_is_false_before_poll(self):
-        poller, _ = _make_poller(store=FakeModelStore(fail_get_version_id=True))
+        poller, _ = _make_poller()
         assert poller.reference_loaded() is False
 
     def test_poll_age_is_none_before_first_poll(self):
@@ -280,10 +263,12 @@ class TestDriftPollerObservers:
         assert age is not None
         assert age >= 0.0
 
-    def test_current_run_id_set_after_poll(self):
-        poller, _ = _make_poller(store=FakeModelStore(version_id="my-run"))
+    def test_known_versions_populated_after_poll(self):
+        records = [_make_record(model_version="v42")]
+        data = FakeDriftDataController(records=records)
+        poller, _ = _make_poller(data=data)
         poller.poll()
-        assert poller.current_version_id() == "my-run"
+        assert "v42" in poller.known_versions()
 
     def test_reference_loaded_after_successful_poll(self):
         records = [_make_record(model_version="v1")]
@@ -351,19 +336,23 @@ class TestDriftPollerPoll:
         assert version_psi_results[0].psi is not None
         assert math.isfinite(version_psi_results[0].psi)
 
-    def test_reloads_reference_when_run_id_changes(self):
-        artifacts = FakeModelStore(version_id="run-1")
-        poller, em = _make_poller(store=artifacts)
-
+    def test_reloads_reference_when_version_appears_in_window(self):
+        records_v1 = [_make_record(prediction=c, model_version="v1") for c in range(10) for _ in range(3)]
+        records_v2 = [_make_record(prediction=c, model_version="v2") for c in range(10) for _ in range(3)]
+        store = FakeModelStore()
+        # First poll: only v1 in window.
+        data = FakeDriftDataController(records=records_v1)
+        poller, em = _make_poller(data=data, store=store)
         poller.poll()
-        assert poller.current_version_id() == "run-1"
+        assert poller.known_versions() == ["v1"]
 
-        artifacts.version_id = "run-2"
+        # Second poll: v1 + v2 in window.
+        data.records = records_v1 + records_v2
         poller.poll()
-        assert poller.current_version_id() == "run-2"
+        assert set(poller.known_versions()) == {"v1", "v2"}
         assert len(em.emitted) == 2
 
-    def test_uses_cached_reference_when_mlflow_unavailable(self):
+    def test_uses_cached_reference_when_store_unavailable(self):
         records = [_make_record(prediction=c, model_version="v1") for c in range(10) for _ in range(3)]
         store = FakeModelStore(reference=_make_reference([0.1] * 10))
         data = FakeDriftDataController(records=records)

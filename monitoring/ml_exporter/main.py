@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import logging
 import math
-import os
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -36,7 +35,7 @@ from prometheus_client import (
 
 from shared.config import require_env
 from shared.data_controller.drift import DriftDataController
-from shared.model_artifact_controller import ModelArtifactError, ModelStage, ModelStore
+from shared.model_artifact_controller import ModelStore
 from shared.schemas.predict_record import PredictRecord
 
 logging.basicConfig(level=logging.INFO)
@@ -58,14 +57,12 @@ class ExporterConfig:
     """Immutable configuration for the ML exporter.
 
     Attributes:
-        model_stage: The deployment stage to monitor (e.g. Production).
         poll_interval: Seconds between poll iterations.
         window_seconds: Width of the sliding prediction window in seconds.
         reference_cache_ttl_seconds: How long (in seconds) a cached per-version
             reference distribution is considered fresh before re-fetching.
     """
 
-    model_stage: ModelStage
     poll_interval: int
     window_seconds: int
     reference_cache_ttl_seconds: int
@@ -78,15 +75,12 @@ class ExporterConfig:
             A fully populated ``ExporterConfig``.
 
         Raises:
-            ValueError: If a required environment variable is missing or invalid.
+            SystemExit: If a required environment variable is missing.
         """
         return cls(
-            model_stage=ModelStage(require_env("MODEL_STAGE")),
             poll_interval=int(require_env("DRIFT_POLL_INTERVAL")),
             window_seconds=int(require_env("DRIFT_WINDOW_SECONDS")),
-            reference_cache_ttl_seconds=int(
-                os.getenv("REFERENCE_CACHE_TTL_SECONDS", "300")
-            ),
+            reference_cache_ttl_seconds=int(require_env("REFERENCE_CACHE_TTL_SECONDS")),
         )
 
 
@@ -323,7 +317,6 @@ class DriftPoller:
         _store: Model store facade for fetching reference distributions.
         _emitter: Metrics emitter.
         _lock: Guards all shared mutable state.
-        _current_version_id: Production model version ID for health-check reporting.
         _ref_cache: Per-version reference cache; maps version string to
             ``(class_frequencies, loaded_at_timestamp)``.
         _last_poll_ts: Unix timestamp of the last successful poll.
@@ -342,21 +335,21 @@ class DriftPoller:
         self._emitter = emitter
 
         self._lock = threading.Lock()
-        self._current_version_id: str | None = None
         # Maps model_version -> (class_frequencies, loaded_at unix timestamp).
         self._ref_cache: dict[str, tuple[list[float], float]] = {}
         self._last_poll_ts: float = 0.0
 
     # ── Public observers ───────────────────────────────────────────────────────
 
-    def current_version_id(self) -> str | None:
-        """Return the current production model version ID, or ``None`` if unknown.
+    def known_versions(self) -> list[str]:
+        """Return the sorted list of model versions with a cached reference.
 
         Returns:
-            An opaque version identifier string, or ``None``.
+            Sorted list of version identifier strings, or an empty list if no
+            references have been loaded yet.
         """
         with self._lock:
-            return self._current_version_id
+            return sorted(self._ref_cache.keys())
 
     def reference_loaded(self) -> bool:
         """Return ``True`` if at least one version reference is cached.
@@ -388,8 +381,6 @@ class DriftPoller:
         (class distribution, confidence) are also emitted for dashboard panels
         that do not require per-version breakdown.
         """
-        self._update_production_version()
-
         since = datetime.now(UTC) - timedelta(seconds=self._config.window_seconds)
         try:
             records = self._data.get_predictions(since=since)
@@ -438,15 +429,6 @@ class DriftPoller:
             self._last_poll_ts = time.time()
 
     # ── Private helpers ────────────────────────────────────────────────────────
-
-    def _update_production_version(self) -> None:
-        """Refresh ``_current_version_id`` from the model registry for health reporting."""
-        try:
-            version_id = self._store.get_current_version_id(self._config.model_stage)
-            with self._lock:
-                self._current_version_id = version_id
-        except ModelArtifactError as e:
-            logger.warning(f"Model registry unavailable: {e}")
 
     def _get_reference(self, version: str) -> list[float] | None:
         """Return cached reference class frequencies for *version*, fetching if needed.
@@ -538,7 +520,7 @@ async def lifespan(app: FastAPI):
 
     logger.info(
         f"ML exporter started — poll_interval={config.poll_interval}s "
-        f"window={config.window_seconds}s stage={config.model_stage.value}"
+        f"window={config.window_seconds}s"
     )
     yield
     logger.info("ML exporter shutting down.")
@@ -556,7 +538,7 @@ async def health(request: Request):
         status_code=200,
         content={
             "status": "healthy",
-            "model_version_id": poller.current_version_id(),
+            "known_model_versions": poller.known_versions(),
             "reference_loaded": poller.reference_loaded(),
             "last_poll_age_seconds": round(age, 1) if age is not None else None,
             "poll_interval": config.poll_interval,

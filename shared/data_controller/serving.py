@@ -6,7 +6,10 @@ from __future__ import annotations
 import logging
 import os
 
+import numpy as np
+
 from shared.data_controller._base import _INSERT, _DataControllerBase
+from shared.data_controller._object_store import MinIOObjectStore
 from shared.schemas.predict_record import PredictRecord
 
 logger = logging.getLogger(__name__)
@@ -48,8 +51,6 @@ class ServingDataController(_DataControllerBase):
             )
         else:
             try:
-                from shared.data_controller._object_store import MinIOObjectStore
-
                 self._store = MinIOObjectStore(
                     endpoint_url=endpoint,
                     bucket=bucket,
@@ -102,8 +103,6 @@ class ServingDataController(_DataControllerBase):
 
         if image_2d is not None and self._s3_available:
             try:
-                import numpy as np  # lazy — only needed in the serving service
-
                 self._store.put_array(
                     f"predictions/{record.uuid}.npy",
                     np.array(image_2d, dtype=np.float32),

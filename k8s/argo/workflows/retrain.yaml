@@ -96,6 +96,17 @@ spec:
           - name: version-id
             valueFrom:
               path: /tmp/version_id.txt
+      initContainers:
+        - name: wait-for-lakefs
+          image: busybox
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - |
+              until wget -q -O- http://lakefs.ml-system.svc.cluster.local:8000/health; do
+                echo "waiting for lakefs..."; sleep 3
+              done
       container:
         image: ml-system-training:latest
         imagePullPolicy: Never

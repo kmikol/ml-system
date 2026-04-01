@@ -8,6 +8,9 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+import psycopg2
+import psycopg2.extras
+
 from shared.schemas.predict_record import PredictRecord
 
 logger = logging.getLogger(__name__)
@@ -191,18 +194,11 @@ def _row_to_record(row: tuple) -> PredictRecord:
 class _DataControllerBase:
     """Postgres connection lifecycle and schema creation.
 
-    All service-specific controllers inherit from this class.  psycopg2 and
-    psycopg2.extras are imported lazily so services that don't use the data
-    controller don't need them installed at import time.
-
     On first connection the UUID type adapter is registered so Python
     ``uuid.UUID`` objects round-trip correctly through Postgres UUID columns.
     """
 
     def __init__(self, dsn: str) -> None:
-        import psycopg2  # lazy — keeps psycopg2 out of import-time for non-users
-        import psycopg2.extras  # extras is a submodule; must be imported explicitly
-
         self._psycopg2 = psycopg2
         self._conn: Any = None
         self._dsn = dsn

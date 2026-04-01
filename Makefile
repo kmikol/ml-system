@@ -510,7 +510,6 @@ test.coverage: ## Run unit tests with line-level coverage report (no Docker need
 	PYTHONPATH=. python -m pytest tests/unit/ shared/data_controller/tests/unit/ shared/model_artifact_controller/tests/unit/ \
 		--cov=serving --cov=annotation --cov=sampling --cov=monitoring --cov=shared \
 		--cov-report=term-missing \
-		--cov-omit='*/tests/*,*/__pycache__/*' \
 		-v
 
 test.integration: ## Run integration tests in Docker

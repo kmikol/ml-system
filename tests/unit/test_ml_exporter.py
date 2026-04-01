@@ -560,8 +560,8 @@ class TestPrometheusEmitterLabels:
         emitter = PrometheusEmitter()
         metrics = WindowMetrics(
             n=30,
-            class_counts={c: 3 for c in range(10)},
-            class_freqs={c: 0.1 for c in range(10)},
+            class_counts=dict.fromkeys(range(10), 3),
+            class_freqs=dict.fromkeys(range(10), 0.1),
             confidence_mean=0.9,
             psi=None,
         )
@@ -578,8 +578,8 @@ class TestPrometheusEmitterLabels:
         emitter = PrometheusEmitter()
         metrics = WindowMetrics(
             n=30,
-            class_counts={c: 3 for c in range(10)},
-            class_freqs={c: 0.1 for c in range(10)},
+            class_counts=dict.fromkeys(range(10), 3),
+            class_freqs=dict.fromkeys(range(10), 0.1),
             confidence_mean=0.9,
             psi=None,
         )
@@ -596,8 +596,8 @@ class TestPrometheusEmitterLabels:
         emitter = PrometheusEmitter()
         metrics = WindowMetrics(
             n=60,
-            class_counts={c: 6 for c in range(10)},
-            class_freqs={c: 0.1 for c in range(10)},
+            class_counts=dict.fromkeys(range(10), 6),
+            class_freqs=dict.fromkeys(range(10), 0.1),
             confidence_mean=0.9,
             psi=None,
         )
@@ -613,13 +613,13 @@ class TestPrometheusEmitterLabels:
 
     def test_sentinel_emitted_for_none_psi(self):
         """VersionPsiResult with psi=None should emit the sentinel value -1."""
-        from monitoring.ml_exporter.main import PrometheusEmitter, _PSI_SENTINEL
+        from monitoring.ml_exporter.main import _PSI_SENTINEL, PrometheusEmitter
 
         emitter = PrometheusEmitter()
         metrics = WindowMetrics(
             n=5,
-            class_counts={c: 0 for c in range(10)},
-            class_freqs={c: 0.0 for c in range(10)},
+            class_counts=dict.fromkeys(range(10), 0),
+            class_freqs=dict.fromkeys(range(10), 0.0),
             confidence_mean=0.0,
             psi=None,
         )

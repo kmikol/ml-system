@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import io
 import logging
 import os
 
@@ -26,6 +25,7 @@ class ServingDataController(_DataControllerBase):
     def __init__(self) -> None:
         self._available = False
         self._failures = 0
+        self._s3_available = False
         dsn = os.getenv("DATA_CONTROLLER_DB_URL", "")
         if not dsn:
             logger.warning("DATA_CONTROLLER_DB_URL not set, predictions will not be persisted")
@@ -37,9 +37,8 @@ class ServingDataController(_DataControllerBase):
         except Exception as exc:
             logger.warning(f"Data controller unavailable (serving continues without): {exc}")
 
-        # MinIO client for prediction image storage — optional, same fire-and-forget semantics.
+        # Object store for prediction image storage — optional, same fire-and-forget semantics.
         # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY come from the ml-system-secrets K8s Secret.
-        self._s3_available = False
         endpoint = os.getenv("DATASET_S3_ENDPOINT_URL", "")
         bucket = os.getenv("DATASET_BUCKET", "")
         if not endpoint or not bucket:
@@ -49,22 +48,21 @@ class ServingDataController(_DataControllerBase):
             )
         else:
             try:
-                import boto3  # lazy — only needed in the serving service
+                from shared.data_controller._object_store import MinIOObjectStore
 
-                self._s3 = boto3.client(
-                    "s3",
+                self._store = MinIOObjectStore(
                     endpoint_url=endpoint,
-                    aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID", ""),
-                    aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY", ""),
+                    bucket=bucket,
+                    access_key=os.environ.get("AWS_ACCESS_KEY_ID", ""),
+                    secret_key=os.environ.get("AWS_SECRET_ACCESS_KEY", ""),
                 )
-                self._bucket = bucket
                 self._s3_available = True
-                logger.info("MinIO client ready for prediction image storage")
+                logger.info("Object store ready for prediction image storage")
             except Exception as exc:
-                logger.warning(f"MinIO client setup failed (serving continues without): {exc}")
+                logger.warning(f"Object store setup failed (serving continues without): {exc}")
 
     def store_prediction(self, record: PredictRecord, image_2d: list | None = None) -> None:
-        """Persist a prediction record to Postgres and, if provided, its image to MinIO.
+        """Persist a prediction record to Postgres and, if provided, its image to object storage.
 
         Fire-and-forget: if either store fails, the error is logged as a warning
         and swallowed. Serving never raises due to storage issues.
@@ -72,7 +70,7 @@ class ServingDataController(_DataControllerBase):
         Args:
             record:   Fully populated PredictRecord.
             image_2d: Optional 14×14 nested list of float32 pixel values [0, 1].
-                      Stored in MinIO at predictions/{record.uuid}.npy.
+                      Stored at predictions/{record.uuid}.npy.
         """
         if not self._available:
             return
@@ -106,13 +104,9 @@ class ServingDataController(_DataControllerBase):
             try:
                 import numpy as np  # lazy — only needed in the serving service
 
-                buf = io.BytesIO()
-                np.save(buf, np.array(image_2d, dtype=np.float32))
-                buf.seek(0)
-                self._s3.put_object(
-                    Bucket=self._bucket,
-                    Key=f"predictions/{record.uuid}.npy",
-                    Body=buf.read(),
+                self._store.put_array(
+                    f"predictions/{record.uuid}.npy",
+                    np.array(image_2d, dtype=np.float32),
                 )
             except Exception as exc:
                 logger.warning(f"Prediction image upload failed for {record.uuid}: {exc}")

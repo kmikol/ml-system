@@ -14,9 +14,11 @@ Idempotent: ON CONFLICT (uuid, version_id) DO NOTHING in Postgres.
 
 Prerequisites:
   - make data.prepare (creates data/v0/ files)
-  - make dc.infra.up (Postgres + MinIO running)
+  - make dc.infra.up (Postgres + MinIO + lakeFS running)
   - DATA_CONTROLLER_DB_URL, DATASET_S3_ENDPOINT_URL, DATASET_BUCKET,
-    AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY set in environment
+    AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
+    LAKEFS_ENDPOINT_URL, LAKEFS_ACCESS_KEY_ID, LAKEFS_SECRET_ACCESS_KEY,
+    LAKEFS_REPO set in environment
 
 Usage:
     DATA_CONTROLLER_DB_URL=postgresql://mlflow:mlflow@localhost:5432/mlflow \\
@@ -109,6 +111,11 @@ def main():
     print("Seeding complete:")
     for split, n in totals.items():
         print(f"  {split}: {n} samples")
+
+    # Register version with lakeFS commit for reproducibility
+    commit_id = ctrl.create_version(version_id=DATASET_VERSION, parent_version_id=None)
+    print(f"lakeFS commit: {commit_id}")
+    print(f"lakeFS tag   : dataset/{DATASET_VERSION}")
 
 
 if __name__ == "__main__":

@@ -145,6 +145,12 @@ def main():
     if version_id is None:
         raise RuntimeError("No dataset version found. Run scripts/seed_dataset.py before training.")
     logger.info(f"Using dataset version: {version_id}")
+
+    version_info = dataset_ctrl.get_version_info(version_id)
+    lakefs_commit_id = version_info["lakefs_commit_id"] if version_info else None
+    if lakefs_commit_id:
+        logger.info(f"lakeFS commit: {lakefs_commit_id}")
+
     train_samples = dataset_ctrl.get_dataset_split(version_id, "train")
     val_samples = dataset_ctrl.get_dataset_split(version_id, "val")
     logger.info(
@@ -201,6 +207,8 @@ def main():
                     "seed": SEED,
                     "train_samples": len(train_samples),
                     "val_samples": len(val_samples),
+                    "dataset_version": version_id,
+                    **({"lakefs_commit_id": lakefs_commit_id} if lakefs_commit_id else {}),
                 },
                 metrics={
                     "val_loss": float(val_metrics.get("val_loss", 0)),

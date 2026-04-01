@@ -1,13 +1,23 @@
 # shared/data_controller/dataset.py
-"""DatasetController — versioned dataset management in Postgres (metadata) and MinIO (images)."""
+"""DatasetController — versioned dataset management in Postgres (metadata) and object storage (images)."""
 
 from __future__ import annotations
 
+import json
+import logging
 import os
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from shared.config import require_env
 from shared.data_controller._base import DataControllerError, _DataControllerBase
+
+if TYPE_CHECKING:
+    from shared.data_controller._lakefs import LakeFSClient
+    from shared.data_controller._object_store import ObjectStore
+
+logger = logging.getLogger(__name__)
 
 # ── SQL ───────────────────────────────────────────────────────────────────────
 
@@ -49,28 +59,87 @@ WHERE version_id = %s
 ON CONFLICT (uuid, version_id) DO NOTHING;
 """
 
+# ── SQL — dataset_versions table ──────────────────────────────────────────────
+
+_INSERT_VERSION = """
+INSERT INTO dataset_versions (version_id, parent_version_id, lakefs_commit_id, lakefs_tag, sample_count)
+VALUES (%s, %s, %s, %s, %s)
+ON CONFLICT (version_id) DO NOTHING;
+"""
+
+_SELECT_VERSION = """
+SELECT version_id, parent_version_id, lakefs_commit_id, lakefs_tag, sample_count, created_at
+FROM dataset_versions
+WHERE version_id = %s;
+"""
+
+_SELECT_VERSION_HISTORY = """
+SELECT version_id, parent_version_id, lakefs_commit_id, lakefs_tag, sample_count, created_at
+FROM dataset_versions
+ORDER BY created_at;
+"""
+
+_SELECT_ALL_SAMPLES_FOR_VERSION = """
+SELECT uuid, split, label, minio_path
+FROM dataset_samples
+WHERE version_id = %s
+ORDER BY uuid;
+"""
+
+_COUNT_SAMPLES_FOR_VERSION = """
+SELECT COUNT(*)
+FROM dataset_samples
+WHERE version_id = %s;
+"""
+
+
+def _build_default_object_store() -> ObjectStore:
+    """Build a MinIOObjectStore from environment variables."""
+    from shared.data_controller._object_store import MinIOObjectStore
+
+    return MinIOObjectStore(
+        endpoint_url=require_env("DATASET_S3_ENDPOINT_URL"),
+        bucket=require_env("DATASET_BUCKET"),
+        access_key=os.environ.get("AWS_ACCESS_KEY_ID", ""),
+        secret_key=os.environ.get("AWS_SECRET_ACCESS_KEY", ""),
+    )
+
 
 class DatasetController(_DataControllerBase):
-    """Manages versioned dataset samples stored in Postgres (metadata) and MinIO (images).
+    """Manages versioned dataset samples stored in Postgres (metadata) and object storage (images).
 
-    Schema:
-      - ``dataset_samples``: membership table — which sample UUIDs belong to each
-        dataset version/split, together with their label and MinIO path.
+    Dataset versions are tracked in two layers:
+      - ``dataset_samples`` (Postgres): fast operational queries by version+split.
+      - lakeFS: immutable commit snapshots with manifests for reproducibility.
 
-    Postgres holds metadata and MinIO holds the actual image bytes (.npy files).
+    Args:
+        object_store: Optional ``ObjectStore`` implementation. If ``None``,
+            a ``MinIOObjectStore`` is built from environment variables.
+        lakefs: Optional ``LakeFSClient``. If ``None``, built from env vars.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        object_store: ObjectStore | None = None,
+        lakefs: LakeFSClient | None = None,
+    ) -> None:
         super().__init__(require_env("DATA_CONTROLLER_DB_URL"))
-        import boto3  # lazy — only needed by the dataset controller
+        self._store: ObjectStore = object_store or _build_default_object_store()
 
-        self._s3 = boto3.client(
-            "s3",
-            endpoint_url=require_env("DATASET_S3_ENDPOINT_URL"),
-            aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID", ""),
-            aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY", ""),
+        if lakefs is None:
+            from shared.data_controller._lakefs import build_lakefs_client
+
+            lakefs = build_lakefs_client()
+        self._lakefs: LakeFSClient = lakefs
+
+        self._lakefs_repo = require_env("LAKEFS_REPO")
+        self._lakefs_branch = os.environ.get("LAKEFS_BRANCH", "main")
+        storage_ns = os.environ.get(
+            "LAKEFS_STORAGE_NAMESPACE",
+            f"s3://{os.environ.get('DATASET_BUCKET', 'lakefs-data')}/",
         )
-        self._bucket = require_env("DATASET_BUCKET")
+        self._lakefs.ensure_repo(self._lakefs_repo, storage_ns)
+        self._lakefs.ensure_branch(self._lakefs_repo, self._lakefs_branch)
 
     # ── Sample management ─────────────────────────────────────────────────────
 
@@ -83,7 +152,7 @@ class DatasetController(_DataControllerBase):
         image_2d: list,
         minio_path: str,
     ) -> None:
-        """Upload image to MinIO and upsert the sample row into ``dataset_samples``.
+        """Upload image to object storage and upsert the sample row into ``dataset_samples``.
 
         Idempotent: ON CONFLICT (uuid, version_id) DO NOTHING — re-seeding the
         same sample into the same version is safe.
@@ -96,14 +165,9 @@ class DatasetController(_DataControllerBase):
             image_2d: 14×14 float32 pixel values in [0, 1].
             minio_path: Key within the bucket (e.g. ``'20260322/{uuid}.npy'``).
         """
-        import io
-
         import numpy as np
 
-        buf = io.BytesIO()
-        np.save(buf, np.array(image_2d, dtype=np.float32))
-        buf.seek(0)
-        self._s3.upload_fileobj(buf, self._bucket, minio_path)
+        self._store.put_array(minio_path, np.array(image_2d, dtype=np.float32))
 
         try:
             conn = self._connect()
@@ -131,7 +195,7 @@ class DatasetController(_DataControllerBase):
             raise DataControllerError(f"Failed to query latest version: {exc}") from exc
 
     def get_dataset_split(self, version_id: str, split: str) -> list[dict]:
-        """Fetch all samples for a version+split, loading images from MinIO.
+        """Fetch all samples for a version+split, loading images from object storage.
 
         Args:
             version_id: Dataset version to query (e.g. ``'v0'``).
@@ -179,7 +243,7 @@ class DatasetController(_DataControllerBase):
     def copy_version(self, src_version_id: str, dst_version_id: str) -> int:
         """Copy all samples from ``src_version_id`` into ``dst_version_id``.
 
-        Pure SQL — no MinIO operations. The ``minio_path`` values are preserved
+        Pure SQL — no object storage operations. The ``minio_path`` values are preserved
         as-is so the new version points to the same objects. Idempotent via
         ON CONFLICT DO NOTHING.
 
@@ -207,12 +271,168 @@ class DatasetController(_DataControllerBase):
             ) from exc
 
     def download_image(self, minio_path: str):
-        """Download and deserialize a single image .npy file from MinIO."""
-        import io
+        """Download and deserialize a single image .npy file from object storage."""
+        return self._store.get_array(minio_path)
 
-        import numpy as np
+    def download_image_or_none(self, minio_path: str):
+        """Download an image, returning ``None`` if the key does not exist."""
+        return self._store.get_array_or_none(minio_path)
 
-        buf = io.BytesIO()
-        self._s3.download_fileobj(self._bucket, minio_path, buf)
-        buf.seek(0)
-        return np.load(buf)
+    # ── Version management (lakeFS) ──────────────────────────────────────────
+
+    def create_version(self, version_id: str, parent_version_id: str | None) -> str:
+        """Register a dataset version in Postgres and commit a manifest to lakeFS.
+
+        Steps:
+          1. Query ``dataset_samples`` for this version_id and build a manifest.
+          2. Upload the manifest to lakeFS on the configured branch.
+          3. Commit and create an immutable tag ``dataset/{version_id}``.
+          4. Insert a row into ``dataset_versions``.
+
+        Args:
+            version_id: The version to register (e.g. ``'v0'``, ``'v1'``).
+            parent_version_id: The previous version this was derived from,
+                or ``None`` for the initial version.
+
+        Returns:
+            The lakeFS commit ID.
+
+        Raises:
+            DataControllerError: If any step fails.
+        """
+        # 1. Build manifest from dataset_samples
+        try:
+            conn = self._connect()
+            with conn.cursor() as cur:
+                cur.execute(_SELECT_ALL_SAMPLES_FOR_VERSION, (version_id,))
+                rows = cur.fetchall()
+        except Exception as exc:
+            raise DataControllerError(
+                f"Failed to query samples for version '{version_id}': {exc}"
+            ) from exc
+
+        if not rows:
+            raise DataControllerError(
+                f"No samples found for version '{version_id}'. "
+                "Store samples before calling create_version()."
+            )
+
+        samples = [
+            {
+                "uuid": str(uuid),
+                "split": split,
+                "label": label,
+                "object_key": minio_path,
+            }
+            for uuid, split, label, minio_path in rows
+        ]
+
+        counts: dict[str, int] = {}
+        for s in samples:
+            counts[s["split"]] = counts.get(s["split"], 0) + 1
+
+        manifest = {
+            "version_id": version_id,
+            "parent_version_id": parent_version_id,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "samples": samples,
+            "counts": counts,
+        }
+
+        manifest_path = f"manifests/{version_id}.json"
+        manifest_bytes = json.dumps(manifest, indent=2, sort_keys=True).encode()
+        tag_name = f"dataset/{version_id}"
+
+        # 2. Upload manifest to lakeFS
+        self._lakefs.put_object(
+            self._lakefs_repo, self._lakefs_branch, manifest_path, manifest_bytes,
+        )
+
+        # 3. Commit and tag
+        commit_id = self._lakefs.commit(
+            self._lakefs_repo,
+            self._lakefs_branch,
+            message=f"Dataset version {version_id}",
+            metadata={
+                "version_id": version_id,
+                "parent_version_id": parent_version_id or "",
+                "sample_count": str(len(samples)),
+            },
+        )
+        self._lakefs.create_tag(self._lakefs_repo, tag_name, commit_id)
+
+        # 4. Register in Postgres
+        try:
+            conn = self._connect()
+            with conn.cursor() as cur:
+                cur.execute(
+                    _INSERT_VERSION,
+                    (version_id, parent_version_id, commit_id, tag_name, len(samples)),
+                )
+            conn.commit()
+        except Exception as exc:
+            try:
+                self._conn.rollback()
+            except Exception:
+                self._conn = None
+            raise DataControllerError(
+                f"Failed to register version '{version_id}' in database: {exc}"
+            ) from exc
+
+        logger.info(
+            f"Created dataset version '{version_id}': "
+            f"{len(samples)} samples, lakeFS commit {commit_id}, tag {tag_name}"
+        )
+        return commit_id
+
+    def get_version_info(self, version_id: str) -> dict | None:
+        """Return metadata for a dataset version, or ``None`` if not found.
+
+        Returns:
+            Dict with keys: ``version_id``, ``parent_version_id``,
+            ``lakefs_commit_id``, ``lakefs_tag``, ``sample_count``, ``created_at``.
+        """
+        try:
+            conn = self._connect()
+            with conn.cursor() as cur:
+                cur.execute(_SELECT_VERSION, (version_id,))
+                row = cur.fetchone()
+            if row is None:
+                return None
+            return {
+                "version_id": row[0],
+                "parent_version_id": row[1],
+                "lakefs_commit_id": row[2],
+                "lakefs_tag": row[3],
+                "sample_count": row[4],
+                "created_at": row[5],
+            }
+        except Exception as exc:
+            raise DataControllerError(
+                f"Failed to query version info for '{version_id}': {exc}"
+            ) from exc
+
+    def get_version_history(self) -> list[dict]:
+        """Return all dataset versions ordered by creation time.
+
+        Returns:
+            List of dicts, each with the same keys as ``get_version_info()``.
+        """
+        try:
+            conn = self._connect()
+            with conn.cursor() as cur:
+                cur.execute(_SELECT_VERSION_HISTORY)
+                rows = cur.fetchall()
+            return [
+                {
+                    "version_id": row[0],
+                    "parent_version_id": row[1],
+                    "lakefs_commit_id": row[2],
+                    "lakefs_tag": row[3],
+                    "sample_count": row[4],
+                    "created_at": row[5],
+                }
+                for row in rows
+            ]
+        except Exception as exc:
+            raise DataControllerError(f"Failed to query version history: {exc}") from exc

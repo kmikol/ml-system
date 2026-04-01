@@ -9,7 +9,10 @@ satisfies the ObjectStore protocol — nothing else in the codebase changes.
 from __future__ import annotations
 
 import logging
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
+
+if TYPE_CHECKING:
+    import numpy as np
 
 from shared.data_controller._base import DataControllerError
 
@@ -22,18 +25,18 @@ class ObjectStore(Protocol):
     Write new backend implementations as classes that satisfy this Protocol.
     """
 
-    def put_array(self, key: str, arr: "numpy.ndarray") -> None:
+    def put_array(self, key: str, arr: np.ndarray) -> None:
         """Serialize and upload a numpy array to the given key."""
         ...
 
-    def get_array(self, key: str) -> "numpy.ndarray":
+    def get_array(self, key: str) -> np.ndarray:
         """Download and deserialize a numpy array from the given key.
 
         Raises DataControllerError if the key does not exist.
         """
         ...
 
-    def get_array_or_none(self, key: str) -> "numpy.ndarray | None":
+    def get_array_or_none(self, key: str) -> np.ndarray | None:
         """Like get_array, but returns None if the key does not exist."""
         ...
 
@@ -62,7 +65,7 @@ class MinIOObjectStore:
         )
         self._bucket = bucket
 
-    def put_array(self, key: str, arr: "numpy.ndarray") -> None:
+    def put_array(self, key: str, arr: np.ndarray) -> None:
         import io
 
         import numpy as np
@@ -75,7 +78,7 @@ class MinIOObjectStore:
         except Exception as exc:
             raise DataControllerError(f"Failed to upload '{key}': {exc}") from exc
 
-    def get_array(self, key: str) -> "numpy.ndarray":
+    def get_array(self, key: str) -> np.ndarray:
         import io
 
         import numpy as np
@@ -88,7 +91,7 @@ class MinIOObjectStore:
         buf.seek(0)
         return np.load(buf)
 
-    def get_array_or_none(self, key: str) -> "numpy.ndarray | None":
+    def get_array_or_none(self, key: str) -> np.ndarray | None:
         import io
 
         import numpy as np

@@ -329,6 +329,7 @@ class DatasetController(_DataControllerBase):
                 exist for the version, or if any step fails.
         """
         self._ensure_lakefs_ready()
+        assert self._lakefs is not None  # guaranteed by _ensure_lakefs_ready()
 
         # Idempotency check: if this version is already registered, return the
         # recorded commit ID so callers always get the canonical, tag-backed value.

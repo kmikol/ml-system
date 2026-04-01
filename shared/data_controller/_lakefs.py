@@ -110,18 +110,17 @@ class LakeFSClient:
             ref = r.branch(branch).commit(message=message, metadata=metadata or {})
             return ref.get_commit().id
         except Exception as exc:
-            raise DataControllerError(
-                f"Failed to commit on '{repo}/{branch}': {exc}"
-            ) from exc
+            raise DataControllerError(f"Failed to commit on '{repo}/{branch}': {exc}") from exc
 
     def create_tag(self, repo: str, tag: str, ref: str) -> None:
         """Create an immutable tag pointing at a ref.
 
-        Idempotent: no-op if the tag already exists (``exist_ok=True``).
+        Raises ``DataControllerError`` if the tag already exists — callers should
+        check for an existing version before calling this method.
         """
         try:
             r = self._lakefs.Repository(repo, client=self._client)
-            r.tag(tag).create(source_ref=ref, exist_ok=True)
+            r.tag(tag).create(source_ref=ref, exist_ok=False)
         except Exception as exc:
             raise DataControllerError(
                 f"Failed to create tag '{tag}' on repo '{repo}': {exc}"

@@ -44,7 +44,7 @@ class ServingDataController(_DataControllerBase):
         if not endpoint or not bucket:
             logger.warning(
                 "DATASET_S3_ENDPOINT_URL or DATASET_BUCKET not set, "
-                "prediction images will not be stored in MinIO"
+                "prediction images will not be stored in the object store"
             )
         else:
             try:

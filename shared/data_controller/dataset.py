@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -63,8 +63,7 @@ ON CONFLICT (uuid, version_id) DO NOTHING;
 
 _INSERT_VERSION = """
 INSERT INTO dataset_versions (version_id, parent_version_id, lakefs_commit_id, lakefs_tag, sample_count)
-VALUES (%s, %s, %s, %s, %s)
-ON CONFLICT (version_id) DO NOTHING;
+VALUES (%s, %s, %s, %s, %s);
 """
 
 _SELECT_VERSION = """
@@ -115,7 +114,10 @@ class DatasetController(_DataControllerBase):
     Args:
         object_store: Optional ``ObjectStore`` implementation. If ``None``,
             a ``MinIOObjectStore`` is built from environment variables.
-        lakefs: Optional ``LakeFSClient``. If ``None``, built from env vars.
+        lakefs: Optional ``LakeFSClient``. If ``None`` and ``LAKEFS_ENDPOINT_URL``
+            is set, a client is built from environment variables. If lakeFS env
+            vars are absent, versioning methods will raise ``DataControllerError``
+            while all other methods (e.g. ``get_dataset_split``) work normally.
     """
 
     def __init__(
@@ -126,12 +128,32 @@ class DatasetController(_DataControllerBase):
         super().__init__(require_env("DATA_CONTROLLER_DB_URL"))
         self._store: ObjectStore = object_store or _build_default_object_store()
 
-        if lakefs is None:
+        # lakeFS is optional: only built when LAKEFS_ENDPOINT_URL is present.
+        # Repo/branch setup is deferred to the first versioning call.
+        if lakefs is not None:
+            self._lakefs: LakeFSClient | None = lakefs
+        elif os.environ.get("LAKEFS_ENDPOINT_URL"):
             from shared.data_controller._lakefs import build_lakefs_client
 
-            lakefs = build_lakefs_client()
-        self._lakefs: LakeFSClient = lakefs
+            self._lakefs = build_lakefs_client()
+        else:
+            self._lakefs = None
 
+        self._lakefs_ready = False  # repo/branch setup deferred until needed
+
+    def _ensure_lakefs_ready(self) -> None:
+        """Lazy-initialize lakeFS repo and branch on first versioning call.
+
+        Raises:
+            DataControllerError: If lakeFS env vars are not configured.
+        """
+        if self._lakefs is None:
+            raise DataControllerError(
+                "lakeFS is not configured. Set LAKEFS_ENDPOINT_URL, "
+                "LAKEFS_ACCESS_KEY_ID, and LAKEFS_SECRET_ACCESS_KEY to enable versioning."
+            )
+        if self._lakefs_ready:
+            return
         self._lakefs_repo = require_env("LAKEFS_REPO")
         self._lakefs_branch = os.environ.get("LAKEFS_BRANCH", "main")
         storage_ns = os.environ.get(
@@ -140,6 +162,7 @@ class DatasetController(_DataControllerBase):
         )
         self._lakefs.ensure_repo(self._lakefs_repo, storage_ns)
         self._lakefs.ensure_branch(self._lakefs_repo, self._lakefs_branch)
+        self._lakefs_ready = True
 
     # ── Sample management ─────────────────────────────────────────────────────
 
@@ -283,7 +306,11 @@ class DatasetController(_DataControllerBase):
     def create_version(self, version_id: str, parent_version_id: str | None) -> str:
         """Register a dataset version in Postgres and commit a manifest to lakeFS.
 
-        Steps:
+        Idempotent: if ``version_id`` is already registered in ``dataset_versions``,
+        the existing ``lakefs_commit_id`` is returned immediately without creating a
+        new commit or tag.
+
+        Steps (first call only):
           1. Query ``dataset_samples`` for this version_id and build a manifest.
           2. Upload the manifest to lakeFS on the configured branch.
           3. Commit and create an immutable tag ``dataset/{version_id}``.
@@ -298,8 +325,21 @@ class DatasetController(_DataControllerBase):
             The lakeFS commit ID.
 
         Raises:
-            DataControllerError: If any step fails.
+            DataControllerError: If lakeFS is not configured, if no samples
+                exist for the version, or if any step fails.
         """
+        self._ensure_lakefs_ready()
+
+        # Idempotency check: if this version is already registered, return the
+        # recorded commit ID so callers always get the canonical, tag-backed value.
+        existing = self.get_version_info(version_id)
+        if existing is not None:
+            logger.info(
+                f"Dataset version '{version_id}' already registered; "
+                f"returning existing commit {existing['lakefs_commit_id']}"
+            )
+            return existing["lakefs_commit_id"]
+
         # 1. Build manifest from dataset_samples
         try:
             conn = self._connect()
@@ -334,7 +374,7 @@ class DatasetController(_DataControllerBase):
         manifest = {
             "version_id": version_id,
             "parent_version_id": parent_version_id,
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
             "samples": samples,
             "counts": counts,
         }
@@ -345,7 +385,10 @@ class DatasetController(_DataControllerBase):
 
         # 2. Upload manifest to lakeFS
         self._lakefs.put_object(
-            self._lakefs_repo, self._lakefs_branch, manifest_path, manifest_bytes,
+            self._lakefs_repo,
+            self._lakefs_branch,
+            manifest_path,
+            manifest_bytes,
         )
 
         # 3. Commit and tag

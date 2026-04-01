@@ -69,7 +69,7 @@ services:
       LAKEFS_INSTALLATION_SECRET_ACCESS_KEY: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
       LAKEFS_INSTALLATION_USER_NAME: admin
     healthcheck:
-      test: ["CMD", "lakefs", "--version"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8000/_health || exit 1"]
       interval: 5s
       timeout: 3s
       retries: 10

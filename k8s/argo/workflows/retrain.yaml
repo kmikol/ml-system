@@ -117,13 +117,13 @@ spec:
           - name: LAKEFS_ACCESS_KEY_ID
             valueFrom:
               secretKeyRef:
-                name: lakefs-credentials
-                key: accessKeyId
+                name: ml-system-secrets
+                key: lakefs-access-key-id
           - name: LAKEFS_SECRET_ACCESS_KEY
             valueFrom:
               secretKeyRef:
-                name: lakefs-credentials
-                key: secretAccessKey
+                name: ml-system-secrets
+                key: lakefs-secret-access-key
           - name: LAKEFS_REPO
             value: "ml-system-datasets"
           - name: VERSION_ID_OUTPUT_PATH
@@ -190,13 +190,13 @@ spec:
           - name: LAKEFS_ACCESS_KEY_ID
             valueFrom:
               secretKeyRef:
-                name: lakefs-credentials
-                key: accessKeyId
+                name: ml-system-secrets
+                key: lakefs-access-key-id
           - name: LAKEFS_SECRET_ACCESS_KEY
             valueFrom:
               secretKeyRef:
-                name: lakefs-credentials
-                key: secretAccessKey
+                name: ml-system-secrets
+                key: lakefs-secret-access-key
           - name: LAKEFS_REPO
             value: "ml-system-datasets"
           - name: RUN_ID_OUTPUT_PATH
@@ -242,13 +242,13 @@ spec:
           - name: LAKEFS_ACCESS_KEY_ID
             valueFrom:
               secretKeyRef:
-                name: lakefs-credentials
-                key: accessKeyId
+                name: ml-system-secrets
+                key: lakefs-access-key-id
           - name: LAKEFS_SECRET_ACCESS_KEY
             valueFrom:
               secretKeyRef:
-                name: lakefs-credentials
-                key: secretAccessKey
+                name: ml-system-secrets
+                key: lakefs-secret-access-key
           - name: LAKEFS_REPO
             value: "ml-system-datasets"
           - name: NEW_RUN_ID

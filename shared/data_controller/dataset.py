@@ -63,7 +63,8 @@ ON CONFLICT (uuid, version_id) DO NOTHING;
 
 _INSERT_VERSION = """
 INSERT INTO dataset_versions (version_id, parent_version_id, lakefs_commit_id, lakefs_tag, sample_count)
-VALUES (%s, %s, %s, %s, %s);
+VALUES (%s, %s, %s, %s, %s)
+ON CONFLICT (version_id) DO NOTHING;
 """
 
 _SELECT_VERSION = """
@@ -313,7 +314,7 @@ class DatasetController(_DataControllerBase):
         Steps (first call only):
           1. Query ``dataset_samples`` for this version_id and build a manifest.
           2. Upload the manifest to lakeFS on the configured branch.
-          3. Commit and create an immutable tag ``dataset/{version_id}``.
+          3. Commit and create an immutable tag ``dataset-{version_id}``.
           4. Insert a row into ``dataset_versions``.
 
         Args:
@@ -392,18 +393,30 @@ class DatasetController(_DataControllerBase):
             manifest_bytes,
         )
 
-        # 3. Commit and tag
-        commit_id = self._lakefs.commit(
-            self._lakefs_repo,
-            self._lakefs_branch,
-            message=f"Dataset version {version_id}",
-            metadata={
-                "version_id": version_id,
-                "parent_version_id": parent_version_id or "",
-                "sample_count": str(len(samples)),
-            },
-        )
-        self._lakefs.create_tag(self._lakefs_repo, tag_name, commit_id)
+        # 3. Commit and tag — tolerate partial-failure recovery where a prior
+        #    run created the tag but did not insert the DB row.
+        existing_commit = self._lakefs.resolve_ref(self._lakefs_repo, tag_name)
+        if existing_commit is not None:
+            # Tag already exists (e.g. prior run crashed after lakeFS write but
+            # before Postgres insert).  Re-use the canonical commit rather than
+            # creating a new one.
+            commit_id = existing_commit
+            logger.warning(
+                f"Tag '{tag_name}' already exists on lakeFS (commit {commit_id}); "
+                "recovering missing database row."
+            )
+        else:
+            commit_id = self._lakefs.commit(
+                self._lakefs_repo,
+                self._lakefs_branch,
+                message=f"Dataset version {version_id}",
+                metadata={
+                    "version_id": version_id,
+                    "parent_version_id": parent_version_id or "",
+                    "sample_count": str(len(samples)),
+                },
+            )
+            self._lakefs.create_tag(self._lakefs_repo, tag_name, commit_id)
 
         # 4. Register in Postgres
         try:

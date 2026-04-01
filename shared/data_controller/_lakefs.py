@@ -126,6 +126,18 @@ class LakeFSClient:
                 f"Failed to create tag '{tag}' on repo '{repo}': {exc}"
             ) from exc
 
+    def resolve_ref(self, repo: str, ref: str) -> str | None:
+        """Return the commit ID a ref (tag, branch, or commit SHA) resolves to.
+
+        Returns ``None`` if the ref does not exist, so callers can use this to
+        check whether a tag was already created without raising an exception.
+        """
+        try:
+            r = self._lakefs.Repository(repo, client=self._client)
+            return r.ref(ref).get_commit().id
+        except Exception:
+            return None
+
 
 def build_lakefs_client() -> LakeFSClient:
     """Build a ``LakeFSClient`` from environment variables.

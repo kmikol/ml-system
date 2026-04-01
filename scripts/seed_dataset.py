@@ -115,7 +115,7 @@ def main():
     # Register version with lakeFS commit for reproducibility
     commit_id = ctrl.create_version(version_id=DATASET_VERSION, parent_version_id=None)
     print(f"lakeFS commit: {commit_id}")
-    print(f"lakeFS tag   : dataset/{DATASET_VERSION}")
+    print(f"lakeFS tag   : dataset-{DATASET_VERSION}")
 
 
 if __name__ == "__main__":

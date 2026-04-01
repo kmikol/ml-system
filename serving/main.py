@@ -130,10 +130,10 @@ class ModelManager:
             if self.model_session is None:
                 raise RuntimeError("Model not loaded")
             # Capture a local reference while holding the lock so that a
-            # concurrent load_from_mlflow() cannot swap the session between
+            # concurrent load_from_registry() cannot swap the session between
             # the is-loaded check and the actual inference call.  The local
             # reference keeps the session alive for the duration of this call
-            # even if load_from_mlflow() replaces self.model_session.
+            # even if load_from_registry() replaces self.model_session.
             session = self.model_session
 
         # Run inference outside the lock.  Using the captured local reference

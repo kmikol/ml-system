@@ -454,7 +454,7 @@ class TestConcurrency:
         """Replacing the session while inference is in flight must not corrupt results.
 
         We simulate a slow inference (via a side-effect that briefly yields to
-        the scheduler) and a concurrent load_from_mlflow()-style swap.  After
+        the scheduler) and a concurrent load_from_registry()-style swap.  After
         both threads finish every result must be self-consistent — the
         prediction and confidence must always agree with the same session's
         logits.

@@ -2,7 +2,7 @@
 """
 Integration tests for DatasetController.
 
-Requires Postgres and MinIO — provided by docker-compose.test.yml.
+Requires Postgres, MinIO, and lakeFS — provided by docker-compose.test.yml.
 Connection details come from environment variables set by the compose file.
 """
 
@@ -158,3 +158,93 @@ class TestDatasetControllerVersions:
         ctrl = DatasetController()
         result = ctrl.get_latest_version()
         assert result is None or isinstance(result, str)
+
+
+class TestDatasetControllerLakeFSVersioning:
+    """Integration tests for create_version(), get_version_info(), get_version_history().
+
+    Requires a running lakeFS service (LAKEFS_ENDPOINT_URL) in addition to
+    Postgres and MinIO.  All services are provided by docker-compose.test.yml.
+    """
+
+    def _store_samples(self, ctrl: DatasetController, version_id: str, n: int = 3) -> None:
+        """Store *n* distinct samples for *version_id*."""
+        for _ in range(n):
+            ctrl.store_sample(**_make_sample(version_id))
+
+    def test_create_version_returns_commit_id(self):
+        ctrl = DatasetController()
+        version = _unique_version()
+        self._store_samples(ctrl, version)
+
+        commit_id = ctrl.create_version(version, parent_version_id=None)
+
+        assert isinstance(commit_id, str)
+        assert len(commit_id) > 0
+
+    def test_create_version_registers_row_in_database(self):
+        ctrl = DatasetController()
+        version = _unique_version()
+        self._store_samples(ctrl, version, n=2)
+
+        commit_id = ctrl.create_version(version, parent_version_id=None)
+
+        info = ctrl.get_version_info(version)
+        assert info is not None
+        assert info["version_id"] == version
+        assert info["lakefs_commit_id"] == commit_id
+        assert info["lakefs_tag"] == f"dataset/{version}"
+        assert info["sample_count"] == 2
+        assert info["parent_version_id"] is None
+
+    def test_create_version_records_parent_version_id(self):
+        ctrl = DatasetController()
+        v1 = _unique_version()
+        v2 = _unique_version()
+        self._store_samples(ctrl, v1)
+        self._store_samples(ctrl, v2)
+
+        ctrl.create_version(v1, parent_version_id=None)
+        ctrl.create_version(v2, parent_version_id=v1)
+
+        info = ctrl.get_version_info(v2)
+        assert info is not None
+        assert info["parent_version_id"] == v1
+
+    def test_create_version_is_idempotent(self):
+        """Second call returns the same commit_id without creating a new commit."""
+        ctrl = DatasetController()
+        version = _unique_version()
+        self._store_samples(ctrl, version)
+
+        commit_id_first = ctrl.create_version(version, parent_version_id=None)
+        commit_id_second = ctrl.create_version(version, parent_version_id=None)
+
+        assert commit_id_first == commit_id_second
+
+    def test_get_version_info_returns_none_for_unknown_version(self):
+        ctrl = DatasetController()
+        result = ctrl.get_version_info("nonexistent-version-xyz")
+        assert result is None
+
+    def test_get_version_history_includes_created_versions(self):
+        ctrl = DatasetController()
+        v1 = _unique_version()
+        v2 = _unique_version()
+        self._store_samples(ctrl, v1)
+        self._store_samples(ctrl, v2)
+        ctrl.create_version(v1, parent_version_id=None)
+        ctrl.create_version(v2, parent_version_id=v1)
+
+        history = ctrl.get_version_history()
+
+        version_ids = [h["version_id"] for h in history]
+        assert v1 in version_ids
+        assert v2 in version_ids
+        # v1 was created first, so it must appear before v2
+        assert version_ids.index(v1) < version_ids.index(v2)
+
+    def test_get_version_history_returns_list(self):
+        ctrl = DatasetController()
+        history = ctrl.get_version_history()
+        assert isinstance(history, list)

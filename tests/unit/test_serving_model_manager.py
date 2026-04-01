@@ -266,9 +266,7 @@ class TestLoadFromRegistry:
 
     def test_returns_false_when_download_raises(self, fresh_manager):
         fresh_manager._store.get_current_version_id.return_value = "new-run"
-        fresh_manager._store.get_serving_bundle.side_effect = ModelArtifactError(
-            "Download failed"
-        )
+        fresh_manager._store.get_serving_bundle.side_effect = ModelArtifactError("Download failed")
         result = fresh_manager.load_from_registry()
         assert result is False
 

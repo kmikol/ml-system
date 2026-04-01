@@ -303,14 +303,16 @@ class TestDriftPollerPoll:
     def test_emits_with_psi_when_reference_loaded(self):
         reference = [0.1] * 10
         records = [_make_record(prediction=c) for c in range(10) for _ in range(3)]
-        artifacts = FakeModelStore(reference=ReferenceDistribution(
-            num_samples=100,
-            pixel_mean=0.5,
-            pixel_std=0.2,
-            embedding_mean=[0.0] * 64,
-            embedding_cov=[[0.0] * 64] * 64,
-            prediction_class_frequencies=reference,
-        ))
+        artifacts = FakeModelStore(
+            reference=ReferenceDistribution(
+                num_samples=100,
+                pixel_mean=0.5,
+                pixel_std=0.2,
+                embedding_mean=[0.0] * 64,
+                embedding_cov=[[0.0] * 64] * 64,
+                prediction_class_frequencies=reference,
+            )
+        )
         data = FakeDriftDataController(records=records)
         poller, em = _make_poller(data=data, store=artifacts)
         poller.poll()
@@ -332,14 +334,16 @@ class TestDriftPollerPoll:
 
     def test_uses_cached_reference_when_mlflow_unavailable(self):
         reference = [0.1] * 10
-        artifacts = FakeModelStore(reference=ReferenceDistribution(
-            num_samples=100,
-            pixel_mean=0.5,
-            pixel_std=0.2,
-            embedding_mean=[0.0] * 64,
-            embedding_cov=[[0.0] * 64] * 64,
-            prediction_class_frequencies=reference,
-        ))
+        artifacts = FakeModelStore(
+            reference=ReferenceDistribution(
+                num_samples=100,
+                pixel_mean=0.5,
+                pixel_std=0.2,
+                embedding_mean=[0.0] * 64,
+                embedding_cov=[[0.0] * 64] * 64,
+                prediction_class_frequencies=reference,
+            )
+        )
         records = [_make_record(prediction=c) for c in range(10) for _ in range(3)]
         data = FakeDriftDataController(records=records)
         poller, em = _make_poller(data=data, store=artifacts)

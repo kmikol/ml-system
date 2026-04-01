@@ -212,9 +212,7 @@ class ModelStore:
             try:
                 gaussians = ClassGaussians.from_dict(raw_gaussians)
             except Exception as exc:
-                raise ModelArtifactError(
-                    f"Invalid class_gaussians payload: {exc}"
-                ) from exc
+                raise ModelArtifactError(f"Invalid class_gaussians payload: {exc}") from exc
 
         ref = None
         if include_reference:

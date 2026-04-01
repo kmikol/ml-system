@@ -286,9 +286,7 @@ class DriftPoller:
             version_id = self._store.get_current_version_id(self._config.model_stage)
             with self._lock:
                 if version_id != self._current_version_id:
-                    logger.info(
-                        f"Model version changed: {self._current_version_id} → {version_id}"
-                    )
+                    logger.info(f"Model version changed: {self._current_version_id} → {version_id}")
                     ref = self._load_reference()
                     self._current_version_id = version_id
                     self._ref_class_freq = ref

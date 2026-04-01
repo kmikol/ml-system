@@ -10,11 +10,11 @@ paths, etc.).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 
-class ModelStage(str, Enum):
+class ModelStage(StrEnum):
     """Deployment stage alias used by the model registry.
 
     Attributes:

@@ -47,9 +47,32 @@ services:
       mc alias set local http://minio:9000 minioadmin minioadmin &&
       mc mb --ignore-existing local/mlflow-artifacts &&
       mc mb --ignore-existing local/test-dataset &&
+      mc mb --ignore-existing local/lakefs-data &&
       echo 'Buckets ready.'
       "
     restart: "no"
+
+  lakefs:
+    image: treeverse/lakefs:1.48
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
+    environment:
+      LAKEFS_DATABASE_TYPE: local
+      LAKEFS_BLOCKSTORE_TYPE: s3
+      LAKEFS_BLOCKSTORE_S3_ENDPOINT: http://minio:9000
+      LAKEFS_BLOCKSTORE_S3_FORCE_PATH_STYLE: "true"
+      LAKEFS_BLOCKSTORE_S3_CREDENTIALS_ACCESS_KEY_ID: minioadmin
+      LAKEFS_BLOCKSTORE_S3_CREDENTIALS_SECRET_ACCESS_KEY: minioadmin
+      LAKEFS_AUTH_ENCRYPT_SECRET_KEY: "test-encryption-secret-key"
+      LAKEFS_INSTALLATION_ACCESS_KEY_ID: "AKIAIOSFODNN7EXAMPLE"
+      LAKEFS_INSTALLATION_SECRET_ACCESS_KEY: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+      LAKEFS_INSTALLATION_USER_NAME: admin
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8000/_health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   mlflow:
     build:
@@ -87,6 +110,8 @@ services:
         condition: service_completed_successfully
       mlflow:
         condition: service_healthy
+      lakefs:
+        condition: service_healthy
     environment:
       DATA_CONTROLLER_DB_URL: postgresql://mlflow:mlflow@postgres:5432/mlflow
       DATASET_S3_ENDPOINT_URL: http://minio:9000
@@ -95,6 +120,10 @@ services:
       AWS_SECRET_ACCESS_KEY: minioadmin
       MLFLOW_TRACKING_URI: http://mlflow:5000
       MLFLOW_S3_ENDPOINT_URL: http://minio:9000
+      LAKEFS_ENDPOINT_URL: http://lakefs:8000
+      LAKEFS_ACCESS_KEY_ID: AKIAIOSFODNN7EXAMPLE
+      LAKEFS_SECRET_ACCESS_KEY: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+      LAKEFS_REPO: ml-system-datasets
     volumes:
       - .:/workspace
     working_dir: /workspace

@@ -46,6 +46,15 @@ minio:
   service:
     type: ClusterIP
 
+lakefs:
+  enabled: true
+  image: treeverse/lakefs:1.48
+  port: 8000
+  repo: ml-system-datasets
+  storageNamespace: "s3://lakefs-data/"
+  service:
+    type: ClusterIP
+
 prometheus:
   enabled: true
   image: prom/prometheus:v2.50.0
@@ -112,6 +121,10 @@ secrets:
   minioAccessKey: minioadmin
   minioSecretKey: minioadmin
   postgresPassword: mlflow
+  lakefs:
+    accessKeyId: AKIAIOSFODNN7EXAMPLE
+    secretAccessKey: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+    encryptSecretKey: "change-me-in-production"
 
 mlExporter:
   enabled: false

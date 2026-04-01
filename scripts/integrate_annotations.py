@@ -4,9 +4,10 @@
 Integrate new annotations into a cumulative new dataset version.
 
 Reads annotated predictions that are not yet in any dataset version,
-downloads the corresponding images from MinIO (stored by the serving layer at
-predictions/{uuid}.npy), and creates a new dataset version by copying the
-previous version's samples and appending the new ones.
+downloads the corresponding images via the DatasetController (object store),
+and creates a new dataset version by copying the previous version's samples
+and appending the new ones.  The version is committed to lakeFS with an
+immutable tag for reproducibility.
 
 Writes /tmp/version_id.txt on success — consumed by Argo as an output parameter.
 
@@ -16,22 +17,18 @@ Exit codes:
 
 Prerequisites (env vars):
   DATA_CONTROLLER_DB_URL, DATASET_S3_ENDPOINT_URL, DATASET_BUCKET,
-  AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
+  AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
+  LAKEFS_ENDPOINT_URL, LAKEFS_ACCESS_KEY_ID, LAKEFS_SECRET_ACCESS_KEY, LAKEFS_REPO
 """
 
-import io
 import logging
 import os
 import random
 import sys
 from pathlib import Path
 
-import boto3
-import numpy as np
-
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from shared.config import require_env  # noqa: E402
 from shared.data_controller.dataset import DatasetController  # noqa: E402
 from shared.logging_config import setup_logging  # noqa: E402
 
@@ -39,15 +36,6 @@ setup_logging("integrate-annotations")
 logger = logging.getLogger(__name__)
 
 VERSION_ID_OUTPUT_PATH = os.environ.get("VERSION_ID_OUTPUT_PATH", "/tmp/version_id.txt")
-
-
-def _download_image(s3_client, bucket: str, key: str) -> np.ndarray | None:
-    try:
-        body = s3_client.get_object(Bucket=bucket, Key=key)["Body"].read()
-        return np.load(io.BytesIO(body))
-    except Exception as exc:
-        logger.warning(f"Could not download {key}: {exc}")
-        return None
 
 
 def _assign_splits(n: int) -> list[str]:
@@ -91,18 +79,9 @@ def main() -> int:
         Path(VERSION_ID_OUTPUT_PATH).write_text(prev_version)
         return 0
 
-    # Copy historical samples (pure SQL, no MinIO)
+    # Copy historical samples (pure SQL, no object store operations)
     copied = ctrl.copy_version(prev_version, new_version)
     logger.info(f"Copied {copied} samples from {prev_version} → {new_version}")
-
-    endpoint = require_env("DATASET_S3_ENDPOINT_URL")
-    bucket = require_env("DATASET_BUCKET")
-    s3 = boto3.client(
-        "s3",
-        endpoint_url=endpoint,
-        aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID", ""),
-        aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY", ""),
-    )
 
     splits = _assign_splits(len(annotated))
     stored = 0
@@ -113,10 +92,11 @@ def main() -> int:
         label = item["label"]
         key = f"predictions/{uuid}.npy"
 
-        image = _download_image(s3, bucket, key)
+        image = ctrl.download_image_or_none(key)
         if image is None:
             logger.warning(
-                f"Skipping {uuid} — image not in MinIO (upload may have failed at serve time)"
+                f"Skipping {uuid} — image not in object store "
+                "(upload may have failed at serve time)"
             )
             skipped += 1
             continue
@@ -137,6 +117,10 @@ def main() -> int:
     if stored == 0 and copied == 0:
         logger.error("No samples in new version — aborting to prevent training on empty dataset")
         return 1
+
+    # Register version with lakeFS commit
+    commit_id = ctrl.create_version(new_version, parent_version_id=prev_version)
+    logger.info(f"lakeFS commit: {commit_id}")
 
     Path(VERSION_ID_OUTPUT_PATH).write_text(new_version)
     logger.info(f"Version {new_version} ready. Written to {VERSION_ID_OUTPUT_PATH}")

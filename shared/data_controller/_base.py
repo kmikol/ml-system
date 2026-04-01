@@ -66,6 +66,17 @@ CREATE TABLE IF NOT EXISTS dataset_samples (
 );
 CREATE INDEX IF NOT EXISTS idx_dataset_samples_version_split
     ON dataset_samples (version_id, split);
+
+-- Dataset version registry.  Each row tracks one immutable dataset version
+-- together with its lakeFS commit and tag for lineage and reproducibility.
+CREATE TABLE IF NOT EXISTS dataset_versions (
+    version_id        TEXT        PRIMARY KEY,
+    parent_version_id TEXT,
+    lakefs_commit_id  TEXT        NOT NULL,
+    lakefs_tag        TEXT        NOT NULL,
+    sample_count      INTEGER     NOT NULL,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 """
 
 # ── SQL — predictions table ───────────────────────────────────────────────────

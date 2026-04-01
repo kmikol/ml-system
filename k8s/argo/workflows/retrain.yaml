@@ -112,6 +112,20 @@ spec:
             value: "minioadmin"
           - name: AWS_SECRET_ACCESS_KEY
             value: "minioadmin"
+          - name: LAKEFS_ENDPOINT_URL
+            value: "http://lakefs.ml-system.svc.cluster.local:8000"
+          - name: LAKEFS_ACCESS_KEY_ID
+            valueFrom:
+              secretKeyRef:
+                name: ml-system-secrets
+                key: lakefs-access-key-id
+          - name: LAKEFS_SECRET_ACCESS_KEY
+            valueFrom:
+              secretKeyRef:
+                name: ml-system-secrets
+                key: lakefs-secret-access-key
+          - name: LAKEFS_REPO
+            value: "ml-system-datasets"
           - name: VERSION_ID_OUTPUT_PATH
             value: "/tmp/version_id.txt"
 
@@ -171,6 +185,20 @@ spec:
             value: "1e-3"
           - name: AUTO_PROMOTE
             value: "false"
+          - name: LAKEFS_ENDPOINT_URL
+            value: "http://lakefs.ml-system.svc.cluster.local:8000"
+          - name: LAKEFS_ACCESS_KEY_ID
+            valueFrom:
+              secretKeyRef:
+                name: ml-system-secrets
+                key: lakefs-access-key-id
+          - name: LAKEFS_SECRET_ACCESS_KEY
+            valueFrom:
+              secretKeyRef:
+                name: ml-system-secrets
+                key: lakefs-secret-access-key
+          - name: LAKEFS_REPO
+            value: "ml-system-datasets"
           - name: RUN_ID_OUTPUT_PATH
             value: "/tmp/run_id.txt"
 
@@ -209,6 +237,20 @@ spec:
             value: "mnist-dataset"
           - name: MODEL_NAME
             value: "ml_system_model"
+          - name: LAKEFS_ENDPOINT_URL
+            value: "http://lakefs.ml-system.svc.cluster.local:8000"
+          - name: LAKEFS_ACCESS_KEY_ID
+            valueFrom:
+              secretKeyRef:
+                name: ml-system-secrets
+                key: lakefs-access-key-id
+          - name: LAKEFS_SECRET_ACCESS_KEY
+            valueFrom:
+              secretKeyRef:
+                name: ml-system-secrets
+                key: lakefs-secret-access-key
+          - name: LAKEFS_REPO
+            value: "ml-system-datasets"
           - name: NEW_RUN_ID
             value: "{{inputs.parameters.run-id}}"
           - name: VERSION_ID

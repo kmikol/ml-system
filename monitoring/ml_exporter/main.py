@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -54,16 +55,38 @@ _EPS = 1e-6
 
 @dataclass(frozen=True)
 class ExporterConfig:
+    """Immutable configuration for the ML exporter.
+
+    Attributes:
+        model_stage: The deployment stage to monitor (e.g. Production).
+        poll_interval: Seconds between poll iterations.
+        window_seconds: Width of the sliding prediction window in seconds.
+        reference_cache_ttl_seconds: How long (in seconds) a cached per-version
+            reference distribution is considered fresh before re-fetching.
+    """
+
     model_stage: ModelStage
     poll_interval: int
     window_seconds: int
+    reference_cache_ttl_seconds: int
 
     @classmethod
     def from_env(cls) -> ExporterConfig:
+        """Construct config from environment variables.
+
+        Returns:
+            A fully populated ``ExporterConfig``.
+
+        Raises:
+            ValueError: If a required environment variable is missing or invalid.
+        """
         return cls(
             model_stage=ModelStage(require_env("MODEL_STAGE")),
             poll_interval=int(require_env("DRIFT_POLL_INTERVAL")),
             window_seconds=int(require_env("DRIFT_WINDOW_SECONDS")),
+            reference_cache_ttl_seconds=int(
+                os.getenv("REFERENCE_CACHE_TTL_SECONDS", "300")
+            ),
         )
 
 
@@ -72,11 +95,38 @@ class ExporterConfig:
 
 @dataclass
 class WindowMetrics:
+    """Aggregate metrics for a prediction window (across all model versions).
+
+    Attributes:
+        n: Total number of predictions in the window.
+        class_counts: Raw prediction counts per class (0–9).
+        class_freqs: Normalised class frequencies per class (0–9).
+        confidence_mean: Mean confidence score across all predictions.
+        psi: Population Stability Index vs reference, or ``None`` when the
+            reference is unavailable or the window is too small.
+    """
+
     n: int
     class_counts: dict[int, int]
     class_freqs: dict[int, float]
     confidence_mean: float
-    psi: float | None  # None when reference unavailable or window too small
+    psi: float | None
+
+
+@dataclass
+class VersionPsiResult:
+    """PSI result for a single model version in a poll window.
+
+    Attributes:
+        version: The model version identifier (matches ``PredictRecord.model_version``).
+        psi: PSI value, or ``None`` when the reference is unavailable or the
+            version sub-window has fewer than ``_MIN_SAMPLES`` predictions.
+        n: Number of predictions for this version in the current window.
+    """
+
+    version: str
+    psi: float | None
+    n: int
 
 
 def compute_psi(actual: list[float], reference: list[float]) -> float:
@@ -100,7 +150,17 @@ def compute_window_metrics(
     records: list[PredictRecord],
     reference: list[float] | None,
 ) -> WindowMetrics:
-    """Pure function: compute all window metrics from records and optional reference."""
+    """Compute all window metrics from records and an optional reference distribution.
+
+    Args:
+        records: Prediction records from the current poll window.
+        reference: Normalised reference class frequencies (length 10), or ``None``
+            when no reference is available.
+
+    Returns:
+        A ``WindowMetrics`` instance.  ``psi`` is ``None`` when *reference* is
+        ``None`` or *records* has fewer than ``_MIN_SAMPLES`` entries.
+    """
     n = len(records)
     counts: dict[int, int] = {}
     freqs: dict[int, float] = {}
@@ -130,13 +190,28 @@ def compute_window_metrics(
 
 
 class MetricsEmitter(Protocol):
-    def emit(self, metrics: WindowMetrics, annotated_count: int) -> None: ...
+    """Protocol for emitting ML monitoring metrics."""
+
+    def emit(
+        self,
+        metrics: WindowMetrics,
+        annotated_count: int,
+        version_psi_results: list[VersionPsiResult],
+    ) -> None: ...
+
     def update_poll_age(self, age: float) -> None: ...
+
     def generate_metrics(self) -> tuple[bytes, str]: ...
 
 
 class PrometheusEmitter:
-    """Wraps a private CollectorRegistry so multiple instances can coexist (e.g. in tests)."""
+    """Wraps a private CollectorRegistry so multiple instances can coexist (e.g. in tests).
+
+    PSI is emitted with a ``model_version`` label so Grafana can plot per-version
+    drift series independently.  A companion ``drift_window_version_sample_count``
+    gauge (also labelled by ``model_version``) provides the per-version window size
+    for context.
+    """
 
     def __init__(self) -> None:
         self._registry = CollectorRegistry()
@@ -164,7 +239,15 @@ class PrometheusEmitter:
         )
         self._psi = Gauge(
             "drift_psi_class_distribution",
-            "PSI of prediction class distribution vs. MLflow reference (-1 = insufficient samples)",
+            "PSI of prediction class distribution vs. reference per model version"
+            " (-1 = insufficient samples)",
+            ["model_version"],
+            registry=self._registry,
+        )
+        self._version_sample_count = Gauge(
+            "drift_window_version_sample_count",
+            "Predictions in current window for a specific model version",
+            ["model_version"],
             registry=self._registry,
         )
         self._poll_age = Gauge(
@@ -178,19 +261,45 @@ class PrometheusEmitter:
             registry=self._registry,
         )
 
-    def emit(self, metrics: WindowMetrics, annotated_count: int) -> None:
+    def emit(
+        self,
+        metrics: WindowMetrics,
+        annotated_count: int,
+        version_psi_results: list[VersionPsiResult],
+    ) -> None:
+        """Publish all window metrics to the Prometheus registry.
+
+        Args:
+            metrics: Aggregate window metrics (class counts/freqs, confidence).
+            annotated_count: Number of annotated but not-yet-trained predictions.
+            version_psi_results: Per-version PSI results to emit with
+                ``model_version`` label.
+        """
         self._sample_count.set(metrics.n)
         for c in range(10):
             self._class_count.labels(class_label=str(c)).set(metrics.class_counts.get(c, 0))
             self._class_freq.labels(class_label=str(c)).set(metrics.class_freqs.get(c, 0.0))
         self._confidence_mean.set(metrics.confidence_mean)
-        self._psi.set(metrics.psi if metrics.psi is not None else _PSI_SENTINEL)
+        for vr in version_psi_results:
+            psi_value = vr.psi if vr.psi is not None else _PSI_SENTINEL
+            self._psi.labels(model_version=vr.version).set(psi_value)
+            self._version_sample_count.labels(model_version=vr.version).set(vr.n)
         self._annotated_count.set(annotated_count)
 
     def update_poll_age(self, age: float) -> None:
+        """Update the poll-age gauge.
+
+        Args:
+            age: Seconds since the last successful poll.
+        """
         self._poll_age.set(age)
 
     def generate_metrics(self) -> tuple[bytes, str]:
+        """Serialise the registry to Prometheus text format.
+
+        Returns:
+            A tuple of ``(payload_bytes, content_type_string)``.
+        """
         return generate_latest(self._registry), CONTENT_TYPE_LATEST
 
 
@@ -198,10 +307,26 @@ class PrometheusEmitter:
 
 
 class DriftPoller:
-    """Stateful orchestrator: fetches data, manages reference reload, calls emitter.
+    """Stateful orchestrator: fetches data, manages per-version reference cache, calls emitter.
+
+    PSI is computed independently for every model version found in the poll window.
+    Reference distributions are cached locally per version with a configurable TTL
+    (``ExporterConfig.reference_cache_ttl_seconds``).  On cache miss or expiry the
+    distribution is fetched through the ``ModelStore`` facade.
 
     All external dependencies are injected via the constructor so the class is
     fully testable without environment variables, a real DB, or MLflow.
+
+    Attributes:
+        _config: Exporter configuration.
+        _data: Data controller for querying predictions.
+        _store: Model store facade for fetching reference distributions.
+        _emitter: Metrics emitter.
+        _lock: Guards all shared mutable state.
+        _current_version_id: Production model version ID for health-check reporting.
+        _ref_cache: Per-version reference cache; maps version string to
+            ``(class_frequencies, loaded_at_timestamp)``.
+        _last_poll_ts: Unix timestamp of the last successful poll.
     """
 
     def __init__(
@@ -218,21 +343,36 @@ class DriftPoller:
 
         self._lock = threading.Lock()
         self._current_version_id: str | None = None
-        self._ref_class_freq: list[float] | None = None
+        # Maps model_version -> (class_frequencies, loaded_at unix timestamp).
+        self._ref_cache: dict[str, tuple[list[float], float]] = {}
         self._last_poll_ts: float = 0.0
 
     # ── Public observers ───────────────────────────────────────────────────────
 
     def current_version_id(self) -> str | None:
+        """Return the current production model version ID, or ``None`` if unknown.
+
+        Returns:
+            An opaque version identifier string, or ``None``.
+        """
         with self._lock:
             return self._current_version_id
 
     def reference_loaded(self) -> bool:
+        """Return ``True`` if at least one version reference is cached.
+
+        Returns:
+            Boolean cache-populated indicator.
+        """
         with self._lock:
-            return self._ref_class_freq is not None
+            return bool(self._ref_cache)
 
     def poll_age(self) -> float | None:
-        """Seconds since the last successful poll, or None if never polled."""
+        """Seconds since the last successful poll, or ``None`` if never polled.
+
+        Returns:
+            Elapsed seconds as a float, or ``None``.
+        """
         with self._lock:
             ts = self._last_poll_ts
         return time.time() - ts if ts > 0 else None
@@ -240,8 +380,15 @@ class DriftPoller:
     # ── Core poll ──────────────────────────────────────────────────────────────
 
     def poll(self) -> None:
-        """Single poll iteration: check reference, fetch window, emit metrics."""
-        self._maybe_reload_reference()
+        """Single poll iteration: fetch window, compute per-version PSI, emit metrics.
+
+        Groups records in the current window by ``model_version``, obtains a
+        (potentially cached) reference distribution for each version, computes
+        PSI independently, and emits all results.  Aggregate window metrics
+        (class distribution, confidence) are also emitted for dashboard panels
+        that do not require per-version breakdown.
+        """
+        self._update_production_version()
 
         since = datetime.now(UTC) - timedelta(seconds=self._config.window_seconds)
         try:
@@ -250,23 +397,34 @@ class DriftPoller:
             logger.warning(f"DB poll failed: {e}")
             return
 
-        with self._lock:
-            ref = self._ref_class_freq
+        # Group records by model version.
+        version_groups: dict[str, list[PredictRecord]] = {}
+        for r in records:
+            version_groups.setdefault(r.model_version, []).append(r)
 
-        metrics = compute_window_metrics(records, ref)
-
-        if metrics.psi is None:
-            if ref is None:
-                logger.warning("Reference distribution not yet loaded, skipping PSI.")
-            else:
-                logger.info(
-                    f"Window too small ({metrics.n} < {_MIN_SAMPLES}), PSI set to sentinel."
-                )
-        else:
-            logger.info(
-                f"Poll: n={metrics.n} PSI={metrics.psi:.4f} "
-                f"dist={[round(metrics.class_freqs[c], 3) for c in range(10)]}"
+        # Compute per-version PSI.
+        version_psi_results: list[VersionPsiResult] = []
+        for version, vrecords in version_groups.items():
+            ref = self._get_reference(version)
+            vmetrics = compute_window_metrics(vrecords, ref)
+            version_psi_results.append(
+                VersionPsiResult(version=version, psi=vmetrics.psi, n=vmetrics.n)
             )
+            if vmetrics.psi is None:
+                if ref is None:
+                    logger.warning(
+                        f"Version {version}: reference unavailable, skipping PSI."
+                    )
+                else:
+                    logger.info(
+                        f"Version {version}: n={vmetrics.n} < {_MIN_SAMPLES},"
+                        " PSI set to sentinel."
+                    )
+            else:
+                logger.info(f"Version {version}: n={vmetrics.n} PSI={vmetrics.psi:.4f}")
+
+        # Aggregate metrics (class freq, confidence, total count) across all versions.
+        aggregate_metrics = compute_window_metrics(records, reference=None)
 
         try:
             annotated_count = self._data.get_annotated_count()
@@ -274,35 +432,66 @@ class DriftPoller:
             logger.warning(f"Annotated count poll failed: {e}")
             annotated_count = 0
 
-        self._emitter.emit(metrics, annotated_count)
+        self._emitter.emit(aggregate_metrics, annotated_count, version_psi_results)
 
         with self._lock:
             self._last_poll_ts = time.time()
 
     # ── Private helpers ────────────────────────────────────────────────────────
 
-    def _maybe_reload_reference(self) -> None:
+    def _update_production_version(self) -> None:
+        """Refresh ``_current_version_id`` from the model registry for health reporting."""
         try:
             version_id = self._store.get_current_version_id(self._config.model_stage)
             with self._lock:
-                if version_id != self._current_version_id:
-                    logger.info(
-                        f"Model version changed: {self._current_version_id} → {version_id}"
-                    )
-                    ref = self._load_reference()
-                    self._current_version_id = version_id
-                    self._ref_class_freq = ref
+                self._current_version_id = version_id
         except ModelArtifactError as e:
-            logger.warning(f"Model registry unavailable, using cached reference: {e}")
+            logger.warning(f"Model registry unavailable: {e}")
 
-    def _load_reference(self) -> list[float] | None:
+    def _get_reference(self, version: str) -> list[float] | None:
+        """Return cached reference class frequencies for *version*, fetching if needed.
+
+        Cache entries are considered fresh for ``reference_cache_ttl_seconds``
+        seconds.  On a cache miss or expiry the reference is fetched through the
+        ``ModelStore`` facade via ``get_version_artifacts``.  If fetching fails and
+        a stale entry exists it is returned as a fallback to avoid a gap in PSI
+        monitoring.
+
+        Args:
+            version: The model version identifier (matches ``PredictRecord.model_version``).
+
+        Returns:
+            Normalised class frequency list (length 10), or ``None`` when no
+            reference is available (cache empty and fetch failed).
+        """
+        now = time.time()
+        with self._lock:
+            cached = self._ref_cache.get(version)
+
+        if cached is not None:
+            freqs, loaded_at = cached
+            if now - loaded_at < self._config.reference_cache_ttl_seconds:
+                return freqs
+
+        # Cache miss or TTL expired — fetch through the model store facade.
         try:
-            ref = self._store.get_reference_distribution(self._config.model_stage)
-            freqs = ref.prediction_class_frequencies
-            logger.info(f"Reference distribution loaded: {freqs}")
+            artifacts = self._store.get_version_artifacts(version, include_reference=True)
+            if artifacts.reference_distribution is None:
+                logger.warning(f"No reference distribution for version {version}.")
+                return None
+            freqs = artifacts.reference_distribution.prediction_class_frequencies
+            logger.info(f"Reference loaded for version {version}: {freqs}")
+            with self._lock:
+                self._ref_cache[version] = (freqs, time.time())
             return freqs
         except Exception as e:
-            logger.warning(f"Failed to load reference distribution: {e}")
+            logger.warning(f"Failed to load reference for version {version}: {e}")
+            # Return stale cache entry rather than dropping PSI entirely.
+            with self._lock:
+                stale = self._ref_cache.get(version)
+            if stale is not None:
+                logger.info(f"Using stale reference for version {version}.")
+                return stale[0]
             return None
 
 

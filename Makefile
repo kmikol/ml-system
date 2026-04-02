@@ -475,7 +475,7 @@ data.inspect.training: ## Plot 4x4 grid of random training images with labels
 # TESTING + DEBUG
 # ═══════════════════════════════════════════════════════════════
 
-.PHONY: test test.unit test.integration \
+.PHONY: test test.unit test.integration test.helm test.e2e \
         test.data_controller.unit test.data_controller.integration \
         test.model_artifact_controller.unit test.model_artifact_controller.integration \
         lint lint.fix format serve.test serve.test.load serve.test.drift mlflow.ui minio.ui clean.pyc
@@ -495,9 +495,10 @@ lint.fix: ## Auto-fix ruff lint issues and format code
 format: ## Format code with ruff
 	ruff format .
 
-test: ## Run lint, type checking, and all tests (unit + integration) in Docker
+test: ## Run lint, type checking, and all tests (unit + integration + helm) in Docker
 	$(MAKE) lint
 	$(MAKE) typecheck
+	$(MAKE) test.helm
 	$(TEST_COMPOSE) run --rm test; \
 	EXIT=$$?; \
 	$(TEST_COMPOSE) down -v; \
@@ -512,11 +513,21 @@ test.coverage: ## Run unit tests with line-level coverage report (no Docker need
 		--cov-report=term-missing \
 		-v
 
-test.integration: ## Run integration tests in Docker
+test.integration: ## Run integration tests in Docker (data controller + model artifact + serving e2e)
 	$(TEST_COMPOSE) run --rm test pytest \
 		shared/data_controller/tests/integration/ \
 		shared/model_artifact_controller/tests/integration/ \
+		tests/integration/test_serving_e2e.py \
 		-v; \
+	EXIT=$$?; \
+	$(TEST_COMPOSE) down -v; \
+	exit $$EXIT
+
+test.helm: ## Run Helm chart manifest policy tests locally (requires helm on PATH)
+	PYTHONPATH=. python -m pytest tests/helm/ -v --tb=short
+
+test.e2e: ## Run serving e2e tests in Docker (builds serving container, seeds model)
+	$(TEST_COMPOSE) run --rm test pytest tests/integration/test_serving_e2e.py -v; \
 	EXIT=$$?; \
 	$(TEST_COMPOSE) down -v; \
 	exit $$EXIT

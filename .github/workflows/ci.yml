@@ -64,9 +64,24 @@ jobs:
             shared/model_artifact_controller/tests/unit/ \
             -v --tb=short
 
+  helm-validate:
+    name: Helm chart validation
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: "3.14.0"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install pyyaml pytest
+      - run: PYTHONPATH=. pytest tests/helm/ -v --tb=short
+
   integration-tests:
     name: Integration tests
-    needs: [lint, typecheck, unit-tests]
+    needs: [lint, typecheck, unit-tests, helm-validate]
     if: github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     steps:

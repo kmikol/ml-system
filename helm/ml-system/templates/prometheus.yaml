@@ -82,6 +82,13 @@ spec:
             - --web.enable-remote-write-receiver
           ports:
             - containerPort: {{ .Values.prometheus.port }}
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: {{ .Values.prometheus.port }}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 12
           volumeMounts:
             - name: config
               mountPath: /etc/prometheus

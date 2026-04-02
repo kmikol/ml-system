@@ -42,6 +42,8 @@ postgres:
   user: mlflow
   persistence:
     size: 5Gi
+  service:
+    type: ClusterIP
 
 minio:
   enabled: true

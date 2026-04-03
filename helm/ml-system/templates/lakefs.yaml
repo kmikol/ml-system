@@ -37,7 +37,7 @@ spec:
             - name: LAKEFS_BLOCKSTORE_TYPE
               value: s3
             - name: LAKEFS_BLOCKSTORE_S3_ENDPOINT
-              value: http://minio:9000
+              value: http://minio.{{ .Values.global.namespace }}.svc.cluster.local:9000
             - name: LAKEFS_BLOCKSTORE_S3_FORCE_PATH_STYLE
               value: "true"
             - name: LAKEFS_BLOCKSTORE_S3_CREDENTIALS_ACCESS_KEY_ID

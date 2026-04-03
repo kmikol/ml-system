@@ -209,6 +209,7 @@ class PrometheusEmitter:
 
     def __init__(self) -> None:
         self._registry = CollectorRegistry()
+        self._tracked_versions: set[str] = set()
         self._sample_count = Gauge(
             "drift_window_sample_count",
             "Predictions in current window",
@@ -274,10 +275,18 @@ class PrometheusEmitter:
             self._class_count.labels(class_label=str(c)).set(metrics.class_counts.get(c, 0))
             self._class_freq.labels(class_label=str(c)).set(metrics.class_freqs.get(c, 0.0))
         self._confidence_mean.set(metrics.confidence_mean)
+
+        current_versions = {vr.version for vr in version_psi_results}
+        # Remove stale model_version label series that are no longer emitted.
+        for version in self._tracked_versions - current_versions:
+            self._psi.remove(version)
+            self._version_sample_count.remove(version)
+
         for vr in version_psi_results:
             psi_value = vr.psi if vr.psi is not None else _PSI_SENTINEL
             self._psi.labels(model_version=vr.version).set(psi_value)
             self._version_sample_count.labels(model_version=vr.version).set(vr.n)
+        self._tracked_versions = current_versions
         self._annotated_count.set(annotated_count)
 
     def update_poll_age(self, age: float) -> None:
@@ -337,6 +346,8 @@ class DriftPoller:
         self._lock = threading.Lock()
         # Maps model_version -> (class_frequencies, loaded_at unix timestamp).
         self._ref_cache: dict[str, tuple[list[float], float]] = {}
+        # Maps model_version -> last_seen unix timestamp in prediction windows.
+        self._version_last_seen_ts: dict[str, float] = {}
         self._last_poll_ts: float = 0.0
 
     # ── Public observers ───────────────────────────────────────────────────────
@@ -393,9 +404,26 @@ class DriftPoller:
         for r in records:
             version_groups.setdefault(r.model_version, []).append(r)
 
-        # Compute per-version PSI.
+        now = time.time()
+        # Mark versions observed in this window.
+        with self._lock:
+            for version in version_groups:
+                self._version_last_seen_ts[version] = now
+
+        # Always process versions present in the current window, even when
+        # retention TTL is 0. TTL retention only controls absent versions.
+        retained_versions = set(version_groups) | self._retained_versions(now)
+
+        # Compute per-version PSI. Versions retained by TTL but absent from the
+        # current window emit the sentinel to make staleness explicit.
         version_psi_results: list[VersionPsiResult] = []
-        for version, vrecords in version_groups.items():
+        for version in sorted(retained_versions):
+            vrecords = version_groups.get(version, [])
+            if not vrecords:
+                version_psi_results.append(VersionPsiResult(version=version, psi=None, n=0))
+                logger.info(f"Version {version}: absent from current window, PSI set to sentinel.")
+                continue
+
             ref = self._get_reference(version)
             vmetrics = compute_window_metrics(vrecords, ref)
             version_psi_results.append(
@@ -472,6 +500,29 @@ class DriftPoller:
                 logger.info(f"Using stale reference for version {version}.")
                 return stale[0]
             return None
+
+    def _retained_versions(self, now: float | None = None) -> set[str]:
+        """Return versions retained for emission and prune expired entries.
+
+        Retention is based on ``reference_cache_ttl_seconds`` and the last time a
+        model version appeared in the current prediction window.
+        """
+        ts = time.time() if now is None else now
+        ttl = self._config.reference_cache_ttl_seconds
+
+        with self._lock:
+            retained: set[str] = set()
+            expired: list[str] = []
+            for version, last_seen in self._version_last_seen_ts.items():
+                if ts - last_seen < ttl:
+                    retained.add(version)
+                else:
+                    expired.append(version)
+
+            for version in expired:
+                del self._version_last_seen_ts[version]
+
+        return retained
 
 
 # ── Background threads ─────────────────────────────────────────────────────────

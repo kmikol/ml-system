@@ -88,6 +88,12 @@ def main() -> int:
 def _main() -> int:
     new_run_id = require_env("NEW_RUN_ID")
     version_id = require_env("VERSION_ID")
+    promoted_version_output_path = os.environ.get(
+        "PROMOTED_MODEL_VERSION_OUTPUT_PATH",
+        "/tmp/promoted_model_version.txt",
+    )
+    with open(promoted_version_output_path, "w", encoding="utf-8") as f:
+        f.write("")
     min_improvement = float(os.environ.get("MIN_VAL_ACC_IMPROVEMENT", "0.0"))
 
     store = ModelStore()
@@ -178,6 +184,8 @@ def _main() -> int:
     try:
         store.promote(version)
         logger.info(f"Promoted v{version.version} → Production")
+        with open(promoted_version_output_path, "w", encoding="utf-8") as f:
+            f.write(version.version)
     except ModelArtifactError as exc:
         logger.error(f"Promotion failed: {exc}")
 

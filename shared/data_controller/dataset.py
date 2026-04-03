@@ -7,15 +7,14 @@ import json
 import logging
 import os
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
 from uuid import UUID
+
+import numpy as np
 
 from shared.config import require_env
 from shared.data_controller._base import DataControllerError, _DataControllerBase
-
-if TYPE_CHECKING:
-    from shared.data_controller._lakefs import LakeFSClient
-    from shared.data_controller._object_store import ObjectStore
+from shared.data_controller._lakefs import LakeFSClient, build_lakefs_client
+from shared.data_controller._object_store import MinIOObjectStore, ObjectStore
 
 logger = logging.getLogger(__name__)
 
@@ -95,8 +94,6 @@ WHERE version_id = %s;
 
 def _build_default_object_store() -> ObjectStore:
     """Build a MinIOObjectStore from environment variables."""
-    from shared.data_controller._object_store import MinIOObjectStore
-
     return MinIOObjectStore(
         endpoint_url=require_env("DATASET_S3_ENDPOINT_URL"),
         bucket=require_env("DATASET_BUCKET"),
@@ -134,8 +131,6 @@ class DatasetController(_DataControllerBase):
         if lakefs is not None:
             self._lakefs: LakeFSClient | None = lakefs
         elif os.environ.get("LAKEFS_ENDPOINT_URL"):
-            from shared.data_controller._lakefs import build_lakefs_client
-
             self._lakefs = build_lakefs_client()
         else:
             self._lakefs = None
@@ -189,8 +184,6 @@ class DatasetController(_DataControllerBase):
             image_2d: 14×14 float32 pixel values in [0, 1].
             minio_path: Key within the bucket (e.g. ``'20260322/{uuid}.npy'``).
         """
-        import numpy as np
-
         self._store.put_array(minio_path, np.array(image_2d, dtype=np.float32))
 
         try:
@@ -214,6 +207,7 @@ class DatasetController(_DataControllerBase):
             with conn.cursor() as cur:
                 cur.execute(_SELECT_LATEST_VERSION)
                 row = cur.fetchone()
+            conn.commit()
             return row[0] if row else None
         except Exception as exc:
             raise DataControllerError(f"Failed to query latest version: {exc}") from exc
@@ -234,6 +228,7 @@ class DatasetController(_DataControllerBase):
             with conn.cursor() as cur:
                 cur.execute(_SELECT_SPLIT, (version_id, split))
                 rows = cur.fetchall()
+            conn.commit()
         except Exception as exc:
             raise DataControllerError(
                 f"Failed to query split '{split}' for version '{version_id}': {exc}"
@@ -260,6 +255,7 @@ class DatasetController(_DataControllerBase):
             with conn.cursor() as cur:
                 cur.execute(_SELECT_UNVERSIONED_ANNOTATIONS)
                 rows = cur.fetchall()
+            conn.commit()
             return [{"uuid": uuid, "label": label} for uuid, label in rows]
         except Exception as exc:
             raise DataControllerError(f"Failed to query unversioned annotations: {exc}") from exc
@@ -454,6 +450,7 @@ class DatasetController(_DataControllerBase):
             with conn.cursor() as cur:
                 cur.execute(_SELECT_VERSION, (version_id,))
                 row = cur.fetchone()
+            conn.commit()
             if row is None:
                 return None
             return {
@@ -480,6 +477,7 @@ class DatasetController(_DataControllerBase):
             with conn.cursor() as cur:
                 cur.execute(_SELECT_VERSION_HISTORY)
                 rows = cur.fetchall()
+            conn.commit()
             return [
                 {
                     "version_id": row[0],

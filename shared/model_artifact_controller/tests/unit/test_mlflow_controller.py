@@ -5,6 +5,8 @@ The fixture replaces ctrl._mlflow and ctrl._client with MagicMocks after
 construction, so each test starts with a clean, controllable state.
 """
 
+import json
+import os
 from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
@@ -325,3 +327,118 @@ class TestSearchVersionByRun:
 
         with pytest.raises(ModelArtifactError, match="run-8"):
             ctrl.search_version_by_run("my_model", "run-8")
+
+
+class TestLogTrainingOutputs:
+    def test_logs_model_dir_and_three_canonical_json_artifacts(self, ctrl):
+        seen_artifacts: dict[str, dict] = {}
+
+        def capture_artifact(run_id, path, artifact_path=None):
+            assert run_id == "run-9"
+            assert artifact_path is None
+            name = os.path.basename(path)
+            with open(path) as f:
+                seen_artifacts[name] = json.load(f)
+
+        ctrl.log_artifact = MagicMock(side_effect=capture_artifact)
+        ctrl.log_artifacts = MagicMock()
+
+        ref = {"num_samples": 100, "class_frequencies": {"0": 0.1}}
+        gauss = {"0": {"mean": [0.0], "precision": [[1.0]]}}
+        schema = {"shape": [14, 14], "dtype": "float32"}
+
+        ctrl.log_training_outputs(
+            run_id="run-9",
+            model_dir="/tmp/model_out",
+            reference_distribution=ref,
+            class_gaussians=gauss,
+            feature_schema=schema,
+        )
+
+        ctrl.log_artifacts.assert_called_once_with("run-9", "/tmp/model_out", "onnx/model")
+        assert seen_artifacts["reference_distribution.json"] == ref
+        assert seen_artifacts["class_gaussians.json"] == gauss
+        assert seen_artifacts["feature_schema.json"] == schema
+
+
+class TestDownloadServingBundle:
+    def test_returns_model_path_and_class_gaussians_when_present(self, ctrl, tmp_path):
+        onnx_root = tmp_path / "onnx"
+        model_dir = onnx_root / "model"
+        model_dir.mkdir(parents=True)
+        (model_dir / "model.onnx").write_bytes(b"onnx")
+
+        gauss_path = tmp_path / "class_gaussians.json"
+        gauss_path.write_text('{"0": {"mean": [1.0], "precision": [[2.0]]}}')
+
+        def fake_download(run_id, artifact_path, local_dir):
+            if artifact_path == "onnx":
+                return str(onnx_root)
+            if artifact_path == "class_gaussians.json":
+                return str(gauss_path)
+            raise AssertionError("unexpected artifact")
+
+        ctrl.download_artifacts = MagicMock(side_effect=fake_download)
+
+        model_path, class_gaussians = ctrl.download_serving_bundle("run-10", str(tmp_path))
+
+        assert model_path == str(model_dir / "model.onnx")
+        assert class_gaussians == {"0": {"mean": [1.0], "precision": [[2.0]]}}
+
+    def test_returns_none_for_gaussians_when_optional_artifact_missing(self, ctrl, tmp_path):
+        onnx_root = tmp_path / "onnx"
+        model_dir = onnx_root / "model"
+        model_dir.mkdir(parents=True)
+        (model_dir / "model.onnx").write_bytes(b"onnx")
+
+        def fake_download(run_id, artifact_path, local_dir):
+            if artifact_path == "onnx":
+                return str(onnx_root)
+            raise FileNotFoundError("missing class gaussians")
+
+        ctrl.download_artifacts = MagicMock(side_effect=fake_download)
+
+        model_path, class_gaussians = ctrl.download_serving_bundle("run-10", str(tmp_path))
+
+        assert model_path == str(model_dir / "model.onnx")
+        assert class_gaussians is None
+
+
+class TestDownloadReferenceDistribution:
+    def test_loads_and_parses_reference_distribution_json(self, ctrl, tmp_path):
+        ref_path = tmp_path / "reference_distribution.json"
+        ref_path.write_text('{"num_samples": 12}')
+        ctrl.download_artifacts = MagicMock(return_value=str(ref_path))
+
+        payload = ctrl.download_reference_distribution("run-11", str(tmp_path))
+
+        assert payload == {"num_samples": 12}
+
+    def test_wraps_errors_with_context(self, ctrl):
+        ctrl.download_artifacts = MagicMock(side_effect=RuntimeError("network error"))
+
+        with pytest.raises(ModelArtifactError, match="reference distribution"):
+            ctrl.download_reference_distribution("run-11", "/tmp")
+
+
+class TestResolveOnnxPath:
+    def test_returns_expected_path_when_model_exists(self, ctrl, tmp_path):
+        onnx_dir = tmp_path / "onnx"
+        model_dir = onnx_dir / "model"
+        model_dir.mkdir(parents=True)
+        model_file = model_dir / "model.onnx"
+        model_file.write_bytes(b"onnx")
+
+        resolved = ctrl._resolve_onnx_path(str(onnx_dir), "model")
+
+        assert resolved == str(model_file)
+
+    def test_delegates_to_dump_tree_when_model_missing(self, ctrl, tmp_path):
+        onnx_dir = tmp_path / "onnx"
+        onnx_dir.mkdir(parents=True)
+        ctrl._dump_tree = MagicMock(side_effect=FileNotFoundError("missing"))
+
+        with pytest.raises(FileNotFoundError, match="missing"):
+            ctrl._resolve_onnx_path(str(onnx_dir), "model")
+
+        ctrl._dump_tree.assert_called_once_with(str(onnx_dir), "model/model.onnx")

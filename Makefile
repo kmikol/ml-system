@@ -126,7 +126,7 @@ help: ## Show this help
 #
 # ═══════════════════════════════════════════════════════════════
 
-.PHONY: k3d.bootstrap k3d.bootstrap.workflow k3d.create k3d.delete k3d.build k3d.import k3d.deploy k3d.status k3d.logs k3d.shell k3d.redeploy k3d.train k3d.annotate k3d.serve.restart k3d.keda.install k3d.ml-exporter.restart k3d.argo.install
+.PHONY: k3d.bootstrap k3d.bootstrap.workflow k3d.create k3d.delete.data k3d.delete.all k3d.build k3d.import k3d.deploy k3d.wait.downstreams k3d.status k3d.logs k3d.shell k3d.redeploy k3d.train k3d.annotate k3d.serve.restart k3d.keda.install k3d.ml-exporter.restart k3d.argo.install
 
 k3d.keda.install: ## Install KEDA into the cluster (run once after k3d.create)
 	@echo "$(CYAN)Installing KEDA...$(RESET)"
@@ -184,7 +184,10 @@ k3d.bootstrap: ## First-time setup: create cluster, install KEDA+Argo, build+imp
 	@echo "$(CYAN)[7/8] Deploying services with Helm...$(RESET)"
 	@$(MAKE) --no-print-directory k3d.deploy
 	@echo ""
-	@echo "$(CYAN)[8/8] Submitting bootstrap-init Argo workflow (seed → verify → train → restart-serving)...$(RESET)"
+	@echo "$(CYAN)[8/9] Waiting for downstream dependencies (Prometheus/KEDA/Argo Events webhooks)...$(RESET)"
+	@$(MAKE) --no-print-directory k3d.wait.downstreams
+	@echo ""
+	@echo "$(CYAN)[9/9] Submitting bootstrap-init Argo workflow (seed → verify → train → restart-serving)...$(RESET)"
 	@$(MAKE) --no-print-directory k3d.bootstrap.workflow
 	@echo ""
 	@echo "$(GREEN)╔══════════════════════════════════════════════════════╗$(RESET)"
@@ -253,7 +256,19 @@ k3d.create: ## Create k3d cluster with port mappings
 	@echo "  Or run everything at once: make k3d.bootstrap"
 
 
-k3d.delete: ## Delete k3d cluster and all its data
+k3d.delete.data: ## Purge runtime data (Postgres/MLflow/MinIO/lakeFS PVC+PV) but keep the k3d cluster
+	@echo "$(YELLOW)Purging all ml-system runtime data (DB/artifacts/lakeFS objects)...$(RESET)"
+	-helm uninstall $(HELM_RELEASE) -n $(K8S_NAMESPACE) --wait
+	-kubectl delete pvc -n $(K8S_NAMESPACE) --all --ignore-not-found=true
+	@PVS=$$(kubectl get pv -o jsonpath='{range .items[?(@.spec.claimRef.namespace=="$(K8S_NAMESPACE)")]}{.metadata.name}{"\n"}{end}'); \
+	if [ -n "$$PVS" ]; then \
+		echo "Deleting PVs:" $$PVS; \
+		kubectl delete pv $$PVS; \
+	fi
+	-kubectl create namespace $(K8S_NAMESPACE) --dry-run=client -o yaml | kubectl apply -f -
+	@echo "$(GREEN)Data purge complete. Redeploy with: make k3d.deploy$(RESET)"
+
+k3d.delete.all: ## Delete k3d cluster and all its data
 	k3d cluster delete $(K3D_CLUSTER)
 	@echo "$(YELLOW)Cluster '$(K3D_CLUSTER)' deleted.$(RESET)"
 
@@ -273,7 +288,7 @@ k3d.import: ## Import custom images into k3d's container runtime
 	k3d image import $(IMG_TRAINING) -c $(K3D_CLUSTER)
 	@echo "$(GREEN)Images imported.$(RESET)"
 
-k3d.deploy: ## Deploy (or upgrade) all services with Helm, then apply Argo Events CRD instances
+k3d.deploy: ## Deploy (or upgrade) all services with Helm, then apply Argo Events CRD instances (fast by default; WAIT=1 for blocking readiness)
 	@echo "$(CYAN)Deploying with Helm...$(RESET)"
 	helm upgrade --install $(HELM_RELEASE) $(HELM_CHART) \
 		-f $(HELM_CHART)/values-local.yaml \
@@ -283,11 +298,42 @@ k3d.deploy: ## Deploy (or upgrade) all services with Helm, then apply Argo Event
 	kubectl apply --server-side --force-conflicts -f k8s/argo/argo-events-resources.yaml
 	kubectl apply --server-side --force-conflicts -f k8s/argo/workflows/
 	@echo ""
-	@echo "$(GREEN)Deployed. Waiting for pods...$(RESET)"
-	kubectl wait --for=condition=available deployment --all \
-		-n $(K8S_NAMESPACE) --timeout=180s 2>/dev/null || true
-	@echo ""
-	@$(MAKE) --no-print-directory k3d.status
+	@echo "$(GREEN)Deployed.$(RESET)"
+	@if [ "$(WAIT)" = "1" ]; then \
+		echo "$(CYAN)WAIT=1 set: waiting for deployments to become available...$(RESET)"; \
+		kubectl wait --for=condition=available deployment --all \
+			-n $(K8S_NAMESPACE) --timeout=$${TIMEOUT:-120s}; \
+		echo "$(CYAN)WAIT=1 set: waiting for downstream dependencies...$(RESET)"; \
+		$(MAKE) --no-print-directory k3d.wait.downstreams TIMEOUT=$${TIMEOUT:-120s}; \
+	else \
+		echo "$(YELLOW)Skipping blocking waits (fast mode). Use 'make k3d.deploy WAIT=1' for readiness waits.$(RESET)"; \
+	fi
+
+k3d.wait.downstreams: ## Wait for critical downstream dependencies that cause startup races when absent
+	@echo "$(CYAN)Waiting for Prometheus deployment to be Available...$(RESET)"
+	kubectl rollout status deployment/prometheus -n $(K8S_NAMESPACE) --timeout=$${TIMEOUT:-120s}
+	@echo "$(CYAN)Waiting for Prometheus query endpoint to respond...$(RESET)"
+	@until kubectl exec -n $(K8S_NAMESPACE) deploy/prometheus -- \
+		wget -qO- 'http://localhost:9090/api/v1/query?query=up' >/dev/null 2>&1; do \
+		echo "  waiting for prometheus query API..."; sleep 3; \
+	done
+	@echo "$(CYAN)Waiting for KEDA external metrics APIService...$(RESET)"
+	@kubectl get apiservice v1beta1.external.metrics.k8s.io >/dev/null 2>&1 && \
+		kubectl wait --for=condition=Available apiservice/v1beta1.external.metrics.k8s.io --timeout=$${TIMEOUT:-120s} || \
+		echo "$(YELLOW)KEDA external metrics APIService not found; skipping this wait.$(RESET)"
+	@echo "$(CYAN)Waiting for ScaledObject readiness (if present)...$(RESET)"
+	@kubectl get scaledobject fastapi-serving-scaler -n $(K8S_NAMESPACE) >/dev/null 2>&1 && \
+		kubectl wait --for=jsonpath='{.status.conditions[?(@.type=="Ready")].status}'=True \
+		scaledobject/fastapi-serving-scaler -n $(K8S_NAMESPACE) --timeout=$${TIMEOUT:-120s} || true
+	@echo "$(CYAN)Waiting for Argo Events webhook endpoints (if present)...$(RESET)"
+	@for svc in psi-alert-eventsource-svc annotation-ready-eventsource-svc; do \
+		if kubectl get svc $$svc -n $(K8S_NAMESPACE) >/dev/null 2>&1; then \
+			until [ -n "$$(kubectl get endpoints $$svc -n $(K8S_NAMESPACE) -o jsonpath='{.subsets[*].addresses[*].ip}' 2>/dev/null)" ]; do \
+				echo "  waiting for endpoint on $$svc..."; sleep 3; \
+			done; \
+		fi; \
+	done
+	@echo "$(GREEN)Downstream dependency waits complete.$(RESET)"
 
 k3d.status: ## Show pods, services, and endpoints
 	@echo "$(CYAN)Pods (ml-system):$(RESET)"
@@ -333,14 +379,26 @@ k3d.shell: ## Open a shell in a pod (POD=fastapi-serving)
 		kubectl exec -it deployment/$(POD) -n $(K8S_NAMESPACE) -- /bin/sh; \
 	fi
 
-k3d.redeploy: k3d.build k3d.import k3d.deploy ## Rebuild, import, and redeploy (full cycle)
+k3d.redeploy: k3d.build k3d.import k3d.deploy ## Rebuild, import, and redeploy (fast by default; WAIT=1 to block on rollout)
 	@# Force rolling restart of deployments that use custom images.
 	@# Required because imagePullPolicy:Never + latest tag means k8s won't
 	@# detect that the image content changed after k3d image import.
 	kubectl rollout restart deployment/fastapi-serving deployment/mlflow deployment/grafana deployment/alloy deployment/prometheus deployment/alertmanager -n $(K8S_NAMESPACE)
 	@kubectl get deployment ml-exporter -n $(K8S_NAMESPACE) &>/dev/null && \
 		kubectl rollout restart deployment/ml-exporter -n $(K8S_NAMESPACE) || true
-	kubectl rollout status deployment/fastapi-serving deployment/mlflow deployment/grafana deployment/alloy deployment/prometheus deployment/alertmanager -n $(K8S_NAMESPACE) --timeout=120s
+	@if [ "$(WAIT)" = "1" ]; then \
+		echo "$(CYAN)WAIT=1 set: waiting for rollout completion...$(RESET)"; \
+		kubectl rollout status deployment/fastapi-serving -n $(K8S_NAMESPACE) --timeout=$${TIMEOUT:-120s}; \
+		kubectl rollout status deployment/mlflow -n $(K8S_NAMESPACE) --timeout=$${TIMEOUT:-120s}; \
+		kubectl rollout status deployment/grafana -n $(K8S_NAMESPACE) --timeout=$${TIMEOUT:-120s}; \
+		kubectl rollout status deployment/alloy -n $(K8S_NAMESPACE) --timeout=$${TIMEOUT:-120s}; \
+		kubectl rollout status deployment/prometheus -n $(K8S_NAMESPACE) --timeout=$${TIMEOUT:-120s}; \
+		kubectl rollout status deployment/alertmanager -n $(K8S_NAMESPACE) --timeout=$${TIMEOUT:-120s}; \
+		kubectl get deployment ml-exporter -n $(K8S_NAMESPACE) &>/dev/null && \
+			kubectl rollout status deployment/ml-exporter -n $(K8S_NAMESPACE) --timeout=$${TIMEOUT:-120s} || true; \
+	else \
+		echo "$(YELLOW)Skipping rollout status waits (fast mode). Use 'make k3d.redeploy WAIT=1' to wait.$(RESET)"; \
+	fi
 	@echo "$(GREEN)Redeploy complete.$(RESET)"
 
 k3d.ml-exporter.restart: ## Restart ml-exporter pod
@@ -475,7 +533,7 @@ data.inspect.training: ## Plot 4x4 grid of random training images with labels
 # TESTING + DEBUG
 # ═══════════════════════════════════════════════════════════════
 
-.PHONY: test test.unit test.integration \
+.PHONY: test test.unit test.integration test.helm test.e2e \
         test.data_controller.unit test.data_controller.integration \
         test.model_artifact_controller.unit test.model_artifact_controller.integration \
         lint lint.fix format serve.test serve.test.load serve.test.drift mlflow.ui minio.ui clean.pyc
@@ -495,9 +553,10 @@ lint.fix: ## Auto-fix ruff lint issues and format code
 format: ## Format code with ruff
 	ruff format .
 
-test: ## Run lint, type checking, and all tests (unit + integration) in Docker
+test: ## Run lint, type checking, and all tests (unit + integration + helm) in Docker
 	$(MAKE) lint
 	$(MAKE) typecheck
+	$(MAKE) test.helm
 	$(TEST_COMPOSE) run --rm test; \
 	EXIT=$$?; \
 	$(TEST_COMPOSE) down -v; \
@@ -510,14 +569,23 @@ test.coverage: ## Run unit tests with line-level coverage report (no Docker need
 	PYTHONPATH=. python -m pytest tests/unit/ shared/data_controller/tests/unit/ shared/model_artifact_controller/tests/unit/ \
 		--cov=serving --cov=annotation --cov=sampling --cov=monitoring --cov=shared \
 		--cov-report=term-missing \
-		--cov-omit='*/tests/*,*/__pycache__/*' \
 		-v
 
-test.integration: ## Run integration tests in Docker
+test.integration: ## Run integration tests in Docker (data controller + model artifact + serving e2e)
 	$(TEST_COMPOSE) run --rm test pytest \
 		shared/data_controller/tests/integration/ \
 		shared/model_artifact_controller/tests/integration/ \
+		tests/integration/test_serving_e2e.py \
 		-v; \
+	EXIT=$$?; \
+	$(TEST_COMPOSE) down -v; \
+	exit $$EXIT
+
+test.helm: ## Run Helm chart manifest policy tests locally (requires helm on PATH)
+	PYTHONPATH=. python -m pytest tests/helm/ -v --tb=short
+
+test.e2e: ## Run serving e2e tests in Docker (builds serving container, seeds model)
+	$(TEST_COMPOSE) run --build --rm test pytest tests/integration/test_serving_e2e.py -v; \
 	EXIT=$$?; \
 	$(TEST_COMPOSE) down -v; \
 	exit $$EXIT
@@ -559,12 +627,6 @@ serve.test.drift: ## Send inverted images with ramping probability (RATE=5 DURAT
 	python3 scripts/drift_test.py --rate $${RATE:-5} --duration $${DURATION:-120} \
 		--inversion-probability $${INVERSION_PROB:-1.0} --ramp $${RAMP:-60}
 
-mlflow.ui: ## Open MLflow UI
-	@open http://localhost:5000 2>/dev/null || echo "http://localhost:5000"
-
-minio.ui: ## Open MinIO console
-	@open http://localhost:9001 2>/dev/null || echo "http://localhost:9001"
-
 clean.pyc: ## Remove Python cache
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 
@@ -601,9 +663,9 @@ docs.serve.online: ## Build and deploy docs to GitHub Pages (gh-pages branch)
 # Port not reachable from host:
 #   → docker ps | grep k3d  (verify port mapping)
 #   → Port mapping is set at cluster creation — immutable.
-#   → To add ports: make k3d.delete && make k3d.create && make k3d.redeploy
+#   → To add ports: make k3d.delete.all && make k3d.create && make k3d.redeploy
 #
 # Start fresh:
-#   make k3d.delete && make k3d.create && make k3d.redeploy
+#   make k3d.delete.all && make k3d.create && make k3d.redeploy
 #
 # ═══════════════════════════════════════════════════════════════

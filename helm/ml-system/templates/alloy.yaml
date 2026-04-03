@@ -165,9 +165,18 @@ spec:
         - name: alloy
           image: {{ .Values.alloy.image }}
           imagePullPolicy: IfNotPresent
-          args: ["run", "/etc/alloy/config.alloy"]
+          args:
+            - "run"
+            - '--server.http.listen-addr={{ .Values.alloy.httpListenAddr }}'
+            - "/etc/alloy/config.alloy"
           ports:
             - containerPort: 12345
+          readinessProbe:
+            tcpSocket:
+              port: 12345
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 12
           volumeMounts:
             - name: config
               mountPath: /etc/alloy

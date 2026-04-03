@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import logging
 
+import lakefs
+
 from shared.config import require_env
 from shared.data_controller._base import DataControllerError
 
@@ -19,9 +21,6 @@ logger = logging.getLogger(__name__)
 class LakeFSClient:
     """Wrapper around the ``lakefs`` high-level Python SDK.
 
-    Lazily imports ``lakefs`` so services that don't need lakeFS don't
-    require it installed at import time.
-
     Args:
         endpoint_url: lakeFS API endpoint (e.g. ``http://lakefs:8000``).
             ``/api/v1`` is appended automatically if not present.
@@ -30,8 +29,6 @@ class LakeFSClient:
     """
 
     def __init__(self, endpoint_url: str, access_key: str, secret_key: str) -> None:
-        import lakefs  # lazy
-
         host = endpoint_url.rstrip("/")
         if not host.endswith("/api/v1"):
             host = f"{host}/api/v1"
@@ -85,7 +82,8 @@ class LakeFSClient:
         try:
             r = self._lakefs.Repository(repo, client=self._client)
             with r.ref(ref).object(path).reader(mode="rb") as reader:
-                return reader.read()
+                payload = reader.read()
+                return payload.encode() if isinstance(payload, str) else payload
         except Exception as exc:
             raise DataControllerError(
                 f"Failed to download '{path}' from '{repo}/{ref}': {exc}"

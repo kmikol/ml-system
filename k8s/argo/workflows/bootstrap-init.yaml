@@ -109,6 +109,16 @@ spec:
               until wget -q -O- http://minio.ml-system.svc.cluster.local:9000/minio/health/ready; do
                 echo "waiting for minio..."; sleep 3
               done
+        - name: wait-for-lakefs
+          image: busybox
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - |
+              until wget -q -O- http://lakefs.ml-system.svc.cluster.local:8000/health; do
+                echo "waiting for lakefs..."; sleep 3
+              done
       container:
         image: ml-system-training:latest
         imagePullPolicy: Never
@@ -125,6 +135,20 @@ spec:
             value: "minioadmin"
           - name: AWS_SECRET_ACCESS_KEY
             value: "minioadmin"
+          - name: LAKEFS_ENDPOINT_URL
+            value: "http://lakefs.ml-system.svc.cluster.local:8000"
+          - name: LAKEFS_ACCESS_KEY_ID
+            valueFrom:
+              secretKeyRef:
+                name: ml-system-secrets
+                key: lakefs-access-key-id
+          - name: LAKEFS_SECRET_ACCESS_KEY
+            valueFrom:
+              secretKeyRef:
+                name: ml-system-secrets
+                key: lakefs-secret-access-key
+          - name: LAKEFS_REPO
+            value: "ml-system-datasets"
 
     # ── Step 2: verify-data ───────────────────────────────────────────────────
     # Validates counts in Postgres and spot-checks pixel round-trip with MinIO.

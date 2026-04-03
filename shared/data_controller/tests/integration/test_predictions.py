@@ -66,15 +66,15 @@ class TestServingDataController:
         assert stored.annotated_label is None
         assert stored.annotation_status == "none"
 
-    def test_store_prediction_is_idempotent(self):
+    def test_store_prediction_with_duplicate_uuid_persists_both_rows(self):
         record = _record()
         ctrl = ServingDataController()
         ctrl.store_prediction(record)
-        ctrl.store_prediction(record)  # ON CONFLICT DO NOTHING
+        ctrl.store_prediction(record)
 
         results = DriftDataController().get_predictions(since=_EPOCH)
         count = sum(1 for r in results if r.uuid == record.uuid)
-        assert count == 1
+        assert count == 2
 
 
 # ── DriftDataController ───────────────────────────────────────────────────────

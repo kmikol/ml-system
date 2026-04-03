@@ -59,11 +59,8 @@ spec:
   triggers:
     - template:
         name: trigger-sample-and-label
-        argoWorkflow:
-          group: argoproj.io
-          version: v1alpha1
-          resource: workflows
-          operation: submit
+        k8s:
+          operation: create
           source:
             resource:
               apiVersion: argoproj.io/v1alpha1
@@ -150,11 +147,8 @@ spec:
     - template:
         name: trigger-retrain
         conditions: "psi-alert-dep && annotation-ready-dep"
-        argoWorkflow:
-          group: argoproj.io
-          version: v1alpha1
-          resource: workflows
-          operation: submit
+        k8s:
+          operation: create
           source:
             resource:
               apiVersion: argoproj.io/v1alpha1

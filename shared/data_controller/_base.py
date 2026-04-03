@@ -8,6 +8,9 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+import psycopg2
+import psycopg2.extras
+
 from shared.schemas.predict_record import PredictRecord
 
 logger = logging.getLogger(__name__)
@@ -33,8 +36,11 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 -- Inference log.  Each row is one prediction returned by the serving service.
 -- uuid is provided by the client when the origin sample is known; otherwise
 -- gen_random_uuid() assigns a fresh value so every prediction is recorded.
+-- uuid is intentionally non-unique because the same source sample can be
+-- observed multiple times over time.
 CREATE TABLE IF NOT EXISTS predictions (
-    uuid                    UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    id                      BIGSERIAL   PRIMARY KEY,
+    uuid                    UUID        NOT NULL DEFAULT gen_random_uuid(),
     timestamp               TIMESTAMPTZ NOT NULL,
     model_version           TEXT        NOT NULL,
     prediction              INTEGER     NOT NULL,
@@ -45,8 +51,11 @@ CREATE TABLE IF NOT EXISTS predictions (
                             CHECK (annotation_status IN ('none', 'candidate', 'annotated')),
     annotated_label         INTEGER
 );
+
 CREATE INDEX IF NOT EXISTS idx_predictions_timestamp
     ON predictions (timestamp);
+CREATE INDEX IF NOT EXISTS idx_predictions_uuid
+    ON predictions (uuid);
 CREATE INDEX IF NOT EXISTS idx_predictions_model_version
     ON predictions (model_version);
 CREATE INDEX IF NOT EXISTS idx_predictions_annotation_status
@@ -86,8 +95,7 @@ INSERT INTO predictions (
     uuid, timestamp, model_version,
     prediction, confidence, prediction_distribution, embedding,
     annotation_status, annotated_label
-) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-ON CONFLICT (uuid) DO NOTHING;
+) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s);
 """
 
 _SELECT_WINDOW = """
@@ -191,18 +199,11 @@ def _row_to_record(row: tuple) -> PredictRecord:
 class _DataControllerBase:
     """Postgres connection lifecycle and schema creation.
 
-    All service-specific controllers inherit from this class.  psycopg2 and
-    psycopg2.extras are imported lazily so services that don't use the data
-    controller don't need them installed at import time.
-
     On first connection the UUID type adapter is registered so Python
     ``uuid.UUID`` objects round-trip correctly through Postgres UUID columns.
     """
 
     def __init__(self, dsn: str) -> None:
-        import psycopg2  # lazy — keeps psycopg2 out of import-time for non-users
-        import psycopg2.extras  # extras is a submodule; must be imported explicitly
-
         self._psycopg2 = psycopg2
         self._conn: Any = None
         self._dsn = dsn

@@ -8,11 +8,12 @@ satisfies the ObjectStore protocol — nothing else in the codebase changes.
 
 from __future__ import annotations
 
+import io
 import logging
-from typing import TYPE_CHECKING, Protocol
+from typing import Protocol
 
-if TYPE_CHECKING:
-    import numpy as np
+import boto3
+import numpy as np
 
 from shared.data_controller._base import DataControllerError
 
@@ -44,8 +45,7 @@ class ObjectStore(Protocol):
 class MinIOObjectStore:
     """S3-compatible object store backed by boto3.
 
-    Lazily imports boto3 and numpy so they are only required by services
-    that actually use the object store.
+    Uses boto3 S3 client and numpy for .npy serialization.
     """
 
     def __init__(
@@ -55,8 +55,6 @@ class MinIOObjectStore:
         access_key: str,
         secret_key: str,
     ) -> None:
-        import boto3  # lazy
-
         self._client = boto3.client(
             "s3",
             endpoint_url=endpoint_url,
@@ -66,10 +64,6 @@ class MinIOObjectStore:
         self._bucket = bucket
 
     def put_array(self, key: str, arr: np.ndarray) -> None:
-        import io
-
-        import numpy as np
-
         buf = io.BytesIO()
         np.save(buf, np.array(arr, dtype=np.float32))
         buf.seek(0)
@@ -79,10 +73,6 @@ class MinIOObjectStore:
             raise DataControllerError(f"Failed to upload '{key}': {exc}") from exc
 
     def get_array(self, key: str) -> np.ndarray:
-        import io
-
-        import numpy as np
-
         buf = io.BytesIO()
         try:
             self._client.download_fileobj(self._bucket, key, buf)
@@ -92,10 +82,6 @@ class MinIOObjectStore:
         return np.load(buf)
 
     def get_array_or_none(self, key: str) -> np.ndarray | None:
-        import io
-
-        import numpy as np
-
         buf = io.BytesIO()
         try:
             self._client.download_fileobj(self._bucket, key, buf)

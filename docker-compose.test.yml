@@ -143,7 +143,6 @@ services:
       MLFLOW_S3_ENDPOINT_URL: http://minio:9000
       MODEL_NAME: ml_system_model
       MODEL_STAGE: Production
-      SERVING_MODEL_POLL_INTERVAL: "5"
       SERVING_SIMULATED_LATENCY_MS: "0"
     healthcheck:
       test:
@@ -184,7 +183,7 @@ services:
       LAKEFS_REPO: ml-system-datasets
       SERVING_BASE_URL: http://serving:8000
       MODEL_NAME: ml_system_model
-      SERVING_MODEL_POLL_INTERVAL: "5"
+      MODEL_STAGE: Production
     volumes:
       - .:/workspace
     working_dir: /workspace

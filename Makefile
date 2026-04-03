@@ -126,7 +126,7 @@ help: ## Show this help
 #
 # ═══════════════════════════════════════════════════════════════
 
-.PHONY: k3d.bootstrap k3d.bootstrap.workflow k3d.create k3d.delete k3d.build k3d.import k3d.deploy k3d.status k3d.logs k3d.shell k3d.redeploy k3d.train k3d.annotate k3d.serve.restart k3d.keda.install k3d.ml-exporter.restart k3d.argo.install
+.PHONY: k3d.bootstrap k3d.bootstrap.workflow k3d.create k3d.delete.data k3d.delete.all k3d.build k3d.import k3d.deploy k3d.status k3d.logs k3d.shell k3d.redeploy k3d.train k3d.annotate k3d.serve.restart k3d.keda.install k3d.ml-exporter.restart k3d.argo.install
 
 k3d.keda.install: ## Install KEDA into the cluster (run once after k3d.create)
 	@echo "$(CYAN)Installing KEDA...$(RESET)"
@@ -253,7 +253,19 @@ k3d.create: ## Create k3d cluster with port mappings
 	@echo "  Or run everything at once: make k3d.bootstrap"
 
 
-k3d.delete: ## Delete k3d cluster and all its data
+k3d.delete.data: ## Purge runtime data (Postgres/MLflow/MinIO/lakeFS PVC+PV) but keep the k3d cluster
+	@echo "$(YELLOW)Purging all ml-system runtime data (DB/artifacts/lakeFS objects)...$(RESET)"
+	-helm uninstall $(HELM_RELEASE) -n $(K8S_NAMESPACE) --wait
+	-kubectl delete pvc -n $(K8S_NAMESPACE) --all --ignore-not-found=true
+	@PVS=$$(kubectl get pv -o jsonpath='{range .items[?(@.spec.claimRef.namespace=="$(K8S_NAMESPACE)")]}{.metadata.name}{"\n"}{end}'); \
+	if [ -n "$$PVS" ]; then \
+		echo "Deleting PVs:" $$PVS; \
+		kubectl delete pv $$PVS; \
+	fi
+	-kubectl create namespace $(K8S_NAMESPACE) --dry-run=client -o yaml | kubectl apply -f -
+	@echo "$(GREEN)Data purge complete. Redeploy with: make k3d.deploy$(RESET)"
+
+k3d.delete.all: ## Delete k3d cluster and all its data
 	k3d cluster delete $(K3D_CLUSTER)
 	@echo "$(YELLOW)Cluster '$(K3D_CLUSTER)' deleted.$(RESET)"
 
@@ -527,7 +539,7 @@ test.helm: ## Run Helm chart manifest policy tests locally (requires helm on PAT
 	PYTHONPATH=. python -m pytest tests/helm/ -v --tb=short
 
 test.e2e: ## Run serving e2e tests in Docker (builds serving container, seeds model)
-	$(TEST_COMPOSE) run --rm test pytest tests/integration/test_serving_e2e.py -v; \
+	$(TEST_COMPOSE) run --build --rm test pytest tests/integration/test_serving_e2e.py -v; \
 	EXIT=$$?; \
 	$(TEST_COMPOSE) down -v; \
 	exit $$EXIT
@@ -569,12 +581,6 @@ serve.test.drift: ## Send inverted images with ramping probability (RATE=5 DURAT
 	python3 scripts/drift_test.py --rate $${RATE:-5} --duration $${DURATION:-120} \
 		--inversion-probability $${INVERSION_PROB:-1.0} --ramp $${RAMP:-60}
 
-mlflow.ui: ## Open MLflow UI
-	@open http://localhost:5000 2>/dev/null || echo "http://localhost:5000"
-
-minio.ui: ## Open MinIO console
-	@open http://localhost:9001 2>/dev/null || echo "http://localhost:9001"
-
 clean.pyc: ## Remove Python cache
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 
@@ -611,9 +617,9 @@ docs.serve.online: ## Build and deploy docs to GitHub Pages (gh-pages branch)
 # Port not reachable from host:
 #   → docker ps | grep k3d  (verify port mapping)
 #   → Port mapping is set at cluster creation — immutable.
-#   → To add ports: make k3d.delete && make k3d.create && make k3d.redeploy
+#   → To add ports: make k3d.delete.all && make k3d.create && make k3d.redeploy
 #
 # Start fresh:
-#   make k3d.delete && make k3d.create && make k3d.redeploy
+#   make k3d.delete.all && make k3d.create && make k3d.redeploy
 #
 # ═══════════════════════════════════════════════════════════════

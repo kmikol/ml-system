@@ -17,7 +17,6 @@ import os
 
 os.environ.setdefault("MODEL_NAME", "test-model")
 os.environ.setdefault("MODEL_STAGE", "Production")
-os.environ.setdefault("SERVING_MODEL_POLL_INTERVAL", "60")
 os.environ.setdefault("SERVING_SIMULATED_LATENCY_MS", "0")
 # ModelArtifactController reads this at construction time (module-level in serving/main.py).
 # A fake value is fine — tests patch load_from_mlflow before any real MLflow call is made.

@@ -15,7 +15,7 @@ Environment variables (set by docker-compose.test.yml):
   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
   MLFLOW_TRACKING_URI       - required only for test_model_hot_swap
   MODEL_NAME                - registered model name
-  SERVING_MODEL_POLL_INTERVAL - used to time the hot-swap wait
+   MODEL_STAGE               - stage alias resolved once at serving startup
 """
 
 from __future__ import annotations
@@ -37,7 +37,6 @@ AWS_KEY = os.environ.get("AWS_ACCESS_KEY_ID", "")
 AWS_SECRET = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
 MLFLOW_URI = os.environ.get("MLFLOW_TRACKING_URI", "")
 MODEL_NAME = os.environ.get("MODEL_NAME", "ml_system_model")
-POLL_INTERVAL = int(os.environ.get("SERVING_MODEL_POLL_INTERVAL", "5"))
 
 _BLANK = [[0.0] * 14 for _ in range(14)]
 
@@ -153,15 +152,14 @@ def test_predict_rejects_invalid_input(bad_body, description):
     assert r.status_code == 422, f"Expected 422 for: {description}, got {r.status_code}"
 
 
-# ── model hot-swap ────────────────────────────────────────────────────────────
+# ── stage alias reload behavior ──────────────────────────────────────────────
 
 
-def test_model_hot_swap():
-    """Serving must pick up a newly promoted model without a pod restart.
+def test_model_stays_pinned_without_restart():
+    """Serving must keep startup-loaded Production model until pod restart.
 
-    Registers a second model version in MLflow, promotes it to Production,
-    then waits for the serving polling thread to detect the change. This tests
-    the ModelManager background thread and its interaction with a real MLflow.
+    Promoting a newer Production alias in MLflow should not affect the running
+    serving container because model loading now happens only once at startup.
     """
     if not MLFLOW_URI:
         pytest.skip("MLFLOW_TRACKING_URI not set — cannot register a second model version")
@@ -173,16 +171,11 @@ def test_model_hot_swap():
     from tests.integration.seed_model import seed_one_model
 
     controller = MLflowModelArtifactController()
-    new_version = seed_one_model(MODEL_NAME, controller)
-
-    # The serving polling thread wakes every POLL_INTERVAL seconds.
-    # Allow an extra buffer so a single missed poll window doesn't flake.
-    wait_seconds = POLL_INTERVAL + 10
-    time.sleep(wait_seconds)
+    seed_one_model(MODEL_NAME, controller)
+    time.sleep(8)
 
     updated_version = httpx.get(f"{BASE}/health", timeout=10).json()["model_version"]
-    assert updated_version != initial_version, (
-        f"model_version did not change after {wait_seconds}s.\n"
-        f"Initial: {initial_version}, current: {updated_version}, new seed: {new_version}.\n"
-        f"Check SERVING_MODEL_POLL_INTERVAL={POLL_INTERVAL} and MLflow connectivity."
+    assert updated_version == initial_version, (
+        "model_version changed without restart, but serving is expected to remain pinned "
+        f"to the startup-resolved Production alias. initial={initial_version} updated={updated_version}"
     )

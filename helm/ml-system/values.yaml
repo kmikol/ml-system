@@ -17,7 +17,6 @@ serving:
     MLFLOW_S3_ENDPOINT_URL: "http://minio:9000"
     MODEL_NAME: "ml_system_model"
     MODEL_STAGE: "Production"
-    SERVING_MODEL_POLL_INTERVAL: "60"
     SERVING_SIMULATED_LATENCY_MS: "0"
   service:
     type: ClusterIP
@@ -93,6 +92,7 @@ alloy:
   enabled: true
   image: grafana/alloy:latest
   scrapeIntervalSeconds: 15
+  httpListenAddr: "0.0.0.0:12345"
 
 loki:
   enabled: true

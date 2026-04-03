@@ -250,21 +250,13 @@ class TestPredictShapeValidation:
 
 
 class TestLoadFromRegistry:
-    def test_returns_false_when_get_version_id_raises(self, fresh_manager):
-        fresh_manager._store.get_current_version_id.side_effect = ModelArtifactError(
-            "Registry down"
-        )
+    def test_returns_false_when_bundle_download_raises(self, fresh_manager):
+        fresh_manager._store.get_current_version_id.side_effect = ModelArtifactError("Registry down")
         result = fresh_manager.load_from_registry()
         assert result is False
 
-    def test_returns_true_on_cache_hit(self, fresh_manager):
-        fresh_manager.model_version = "run-42"
-        fresh_manager._store.get_current_version_id.return_value = "run-42"
-        result = fresh_manager.load_from_registry()
-        assert result is True
-
     def test_returns_false_when_download_raises(self, fresh_manager):
-        fresh_manager._store.get_current_version_id.return_value = "new-run"
+        fresh_manager._store.get_current_version_id.return_value = "run-99"
         fresh_manager._store.get_serving_bundle.side_effect = ModelArtifactError("Download failed")
         result = fresh_manager.load_from_registry()
         assert result is False

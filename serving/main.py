@@ -38,7 +38,6 @@ logger = logging.getLogger(__name__)
 
 # ── All config from env, no defaults ─────────────────────────────
 MODEL_STAGE = ModelStage(require_env("MODEL_STAGE"))
-POLL_INTERVAL = int(require_env("SERVING_MODEL_POLL_INTERVAL"))
 SIMULATED_LATENCY_S = int(require_env("SERVING_SIMULATED_LATENCY_MS")) / 1000.0
 # Semaphore caps concurrency to 1. At 333ms service time this saturates at ~3 RPS.
 # Requests beyond capacity queue here — latency grows linearly with queue depth.
@@ -78,19 +77,12 @@ class ModelManager:
     def load_from_registry(self) -> bool:
         try:
             version_id = self._store.get_current_version_id(MODEL_STAGE)
-        except ModelArtifactError as e:
-            logger.warning(str(e))
-            return False
-
-        if self.model_version == version_id:
-            return True
-
-        logger.info(f"Downloading model for stage {MODEL_STAGE.value}...")
-        try:
             bundle = self._store.get_serving_bundle(MODEL_STAGE, include_gaussians=True)
         except ModelArtifactError as e:
             logger.error(str(e))
             return False
+
+        logger.info(f"Downloading model for stage {MODEL_STAGE.value}...")
 
         logger.info(f"Model: {bundle.model_path}")
 
@@ -167,15 +159,6 @@ data_controller = ServingDataController()
 start_time = time.time()
 
 
-def poll_model_registry():
-    while True:
-        time.sleep(POLL_INTERVAL)
-        try:
-            model_manager.load_from_registry()
-        except Exception as e:
-            logger.error(f"Model poll failed: {e}")
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     for attempt in range(5):
@@ -185,8 +168,6 @@ async def lifespan(app: FastAPI):
         await asyncio.sleep(5)
     else:
         logger.error("Failed to load model after 5 attempts.")
-
-    threading.Thread(target=poll_model_registry, daemon=True).start()
     yield
     logger.info("Shutting down.")
 

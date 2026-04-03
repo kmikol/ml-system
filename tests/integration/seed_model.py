@@ -59,7 +59,7 @@ def seed_one_model(model_name: str, controller: MLflowModelArtifactController) -
     """Export a minimal ONNX model, register it in MLflow, and promote to Production.
 
     Returns the version string assigned by the registry.
-    Called by the seed docker-compose service and also by the hot-swap test.
+    Called by the seed docker-compose service and integration tests.
     """
     with tempfile.TemporaryDirectory(prefix="seed_model_") as tmp:
         model_dir = Path(tmp) / "model"

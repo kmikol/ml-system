@@ -251,7 +251,9 @@ class TestPredictShapeValidation:
 
 class TestLoadFromRegistry:
     def test_returns_false_when_bundle_download_raises(self, fresh_manager):
-        fresh_manager._store.get_current_version_id.side_effect = ModelArtifactError("Registry down")
+        fresh_manager._store.get_current_version_id.side_effect = ModelArtifactError(
+            "Registry down"
+        )
         result = fresh_manager.load_from_registry()
         assert result is False
 

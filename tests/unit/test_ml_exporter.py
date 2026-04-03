@@ -393,6 +393,39 @@ class TestDriftPollerPoll:
         assert all(metrics.class_counts[c] == 0 for c in range(10))
         assert version_psi_results == []
 
+    def test_missing_retained_version_emits_sentinel_with_zero_samples(self):
+        records = [_make_record(model_version="v1") for _ in range(30)]
+        data = FakeDriftDataController(records=records)
+        poller, em = _make_poller(
+            config=_make_config(reference_cache_ttl_seconds=300),
+            data=data,
+        )
+
+        poller.poll()
+        data.records = []
+        poller.poll()
+
+        _, _, version_psi_results = em.emitted[1]
+        assert len(version_psi_results) == 1
+        assert version_psi_results[0].version == "v1"
+        assert version_psi_results[0].n == 0
+        assert version_psi_results[0].psi is None
+
+    def test_retained_version_expires_when_ttl_elapsed(self):
+        records = [_make_record(model_version="v1") for _ in range(30)]
+        data = FakeDriftDataController(records=records)
+        poller, em = _make_poller(
+            config=_make_config(reference_cache_ttl_seconds=0),
+            data=data,
+        )
+
+        poller.poll()
+        data.records = []
+        poller.poll()
+
+        _, _, version_psi_results = em.emitted[1]
+        assert version_psi_results == []
+
 
 # ── Multi-version window ───────────────────────────────────────────────────────
 
@@ -638,3 +671,26 @@ class TestPrometheusEmitterLabels:
 
         output = emitter.generate_metrics()[0].decode()
         assert f'drift_psi_class_distribution{{model_version="v1"}} {_PSI_SENTINEL}' in output
+
+    def test_stale_model_version_labels_are_removed_when_not_emitted(self):
+        from monitoring.ml_exporter.main import PrometheusEmitter
+
+        emitter = PrometheusEmitter()
+        metrics = WindowMetrics(
+            n=30,
+            class_counts=dict.fromkeys(range(10), 3),
+            class_freqs=dict.fromkeys(range(10), 0.1),
+            confidence_mean=0.9,
+            psi=None,
+        )
+
+        emitter.emit(
+            metrics,
+            annotated_count=0,
+            version_psi_results=[VersionPsiResult(version="v1", psi=0.1, n=30)],
+        )
+        emitter.emit(metrics, annotated_count=0, version_psi_results=[])
+
+        output = emitter.generate_metrics()[0].decode()
+        assert 'drift_psi_class_distribution{model_version="v1"}' not in output
+        assert 'drift_window_version_sample_count{model_version="v1"}' not in output

@@ -117,8 +117,7 @@ def test_serving_required_env_vars_present_in_default_values():
     serving_deployments = [
         d
         for d in docs
-        if d.get("kind") == "Deployment"
-        and d.get("metadata", {}).get("name") == "fastapi-serving"
+        if d.get("kind") == "Deployment" and d.get("metadata", {}).get("name") == "fastapi-serving"
     ]
     assert serving_deployments, "fastapi-serving Deployment not found in rendered chart"
 
@@ -237,13 +236,10 @@ def test_keda_scaledobject_targets_existing_deployment():
 
     scaled_objects = [d for d in docs if d.get("kind") == "ScaledObject"]
     assert scaled_objects, (
-        "No ScaledObject found in chart output. "
-        "Is autoscaling.enabled set to true in values.yaml?"
+        "No ScaledObject found in chart output. Is autoscaling.enabled set to true in values.yaml?"
     )
 
-    deployment_names = {
-        d["metadata"]["name"] for d in docs if d.get("kind") == "Deployment"
-    }
+    deployment_names = {d["metadata"]["name"] for d in docs if d.get("kind") == "Deployment"}
 
     for so in scaled_objects:
         target = so["spec"]["scaleTargetRef"]["name"]
@@ -268,13 +264,7 @@ def test_service_selectors_match_a_deployment():
     pod_label_sets: list[tuple[str, dict]] = []
     for doc in docs:
         if doc.get("kind") == "Deployment":
-            labels = (
-                doc.get("spec", {})
-                .get("template", {})
-                .get("metadata", {})
-                .get("labels")
-                or {}
-            )
+            labels = doc.get("spec", {}).get("template", {}).get("metadata", {}).get("labels") or {}
             pod_label_sets.append((doc["metadata"]["name"], labels))
 
     for doc in docs:

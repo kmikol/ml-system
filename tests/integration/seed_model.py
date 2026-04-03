@@ -15,7 +15,6 @@ Environment:
 
 from __future__ import annotations
 
-import json
 import tempfile
 from pathlib import Path
 
@@ -71,8 +70,7 @@ def seed_one_model(model_name: str, controller: MLflowModelArtifactController) -
             "pixel_statistics": {"mean": 0.1, "std": 0.1},
             "embedding_mean": [0.0] * EMBEDDING_DIM,
             "embedding_cov": [
-                [1.0 if i == j else 0.0 for j in range(EMBEDDING_DIM)]
-                for i in range(EMBEDDING_DIM)
+                [1.0 if i == j else 0.0 for j in range(EMBEDDING_DIM)] for i in range(EMBEDDING_DIM)
             ],
             "prediction_class_frequencies": [1.0 / NUM_CLASSES] * NUM_CLASSES,
         }

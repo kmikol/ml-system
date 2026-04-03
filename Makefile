@@ -126,7 +126,7 @@ help: ## Show this help
 #
 # ═══════════════════════════════════════════════════════════════
 
-.PHONY: k3d.bootstrap k3d.bootstrap.workflow k3d.create k3d.delete.data k3d.delete.all k3d.build k3d.import k3d.deploy k3d.status k3d.logs k3d.shell k3d.redeploy k3d.train k3d.annotate k3d.serve.restart k3d.keda.install k3d.ml-exporter.restart k3d.argo.install
+.PHONY: k3d.bootstrap k3d.bootstrap.workflow k3d.create k3d.delete.data k3d.delete.all k3d.build k3d.import k3d.deploy k3d.wait.downstreams k3d.status k3d.logs k3d.shell k3d.redeploy k3d.train k3d.annotate k3d.serve.restart k3d.keda.install k3d.ml-exporter.restart k3d.argo.install
 
 k3d.keda.install: ## Install KEDA into the cluster (run once after k3d.create)
 	@echo "$(CYAN)Installing KEDA...$(RESET)"
@@ -184,7 +184,10 @@ k3d.bootstrap: ## First-time setup: create cluster, install KEDA+Argo, build+imp
 	@echo "$(CYAN)[7/8] Deploying services with Helm...$(RESET)"
 	@$(MAKE) --no-print-directory k3d.deploy
 	@echo ""
-	@echo "$(CYAN)[8/8] Submitting bootstrap-init Argo workflow (seed → verify → train → restart-serving)...$(RESET)"
+	@echo "$(CYAN)[8/9] Waiting for downstream dependencies (Prometheus/KEDA/Argo Events webhooks)...$(RESET)"
+	@$(MAKE) --no-print-directory k3d.wait.downstreams
+	@echo ""
+	@echo "$(CYAN)[9/9] Submitting bootstrap-init Argo workflow (seed → verify → train → restart-serving)...$(RESET)"
 	@$(MAKE) --no-print-directory k3d.bootstrap.workflow
 	@echo ""
 	@echo "$(GREEN)╔══════════════════════════════════════════════════════╗$(RESET)"
@@ -300,9 +303,37 @@ k3d.deploy: ## Deploy (or upgrade) all services with Helm, then apply Argo Event
 		echo "$(CYAN)WAIT=1 set: waiting for deployments to become available...$(RESET)"; \
 		kubectl wait --for=condition=available deployment --all \
 			-n $(K8S_NAMESPACE) --timeout=$${TIMEOUT:-120s}; \
+		echo "$(CYAN)WAIT=1 set: waiting for downstream dependencies...$(RESET)"; \
+		$(MAKE) --no-print-directory k3d.wait.downstreams TIMEOUT=$${TIMEOUT:-120s}; \
 	else \
 		echo "$(YELLOW)Skipping blocking waits (fast mode). Use 'make k3d.deploy WAIT=1' for readiness waits.$(RESET)"; \
 	fi
+
+k3d.wait.downstreams: ## Wait for critical downstream dependencies that cause startup races when absent
+	@echo "$(CYAN)Waiting for Prometheus deployment to be Available...$(RESET)"
+	kubectl rollout status deployment/prometheus -n $(K8S_NAMESPACE) --timeout=$${TIMEOUT:-120s}
+	@echo "$(CYAN)Waiting for Prometheus query endpoint to respond...$(RESET)"
+	@until kubectl exec -n $(K8S_NAMESPACE) deploy/prometheus -- \
+		wget -qO- 'http://localhost:9090/api/v1/query?query=up' >/dev/null 2>&1; do \
+		echo "  waiting for prometheus query API..."; sleep 3; \
+	done
+	@echo "$(CYAN)Waiting for KEDA external metrics APIService...$(RESET)"
+	@kubectl get apiservice v1beta1.external.metrics.k8s.io >/dev/null 2>&1 && \
+		kubectl wait --for=condition=Available apiservice/v1beta1.external.metrics.k8s.io --timeout=$${TIMEOUT:-120s} || \
+		echo "$(YELLOW)KEDA external metrics APIService not found; skipping this wait.$(RESET)"
+	@echo "$(CYAN)Waiting for ScaledObject readiness (if present)...$(RESET)"
+	@kubectl get scaledobject fastapi-serving-scaler -n $(K8S_NAMESPACE) >/dev/null 2>&1 && \
+		kubectl wait --for=jsonpath='{.status.conditions[?(@.type=="Ready")].status}'=True \
+		scaledobject/fastapi-serving-scaler -n $(K8S_NAMESPACE) --timeout=$${TIMEOUT:-120s} || true
+	@echo "$(CYAN)Waiting for Argo Events webhook endpoints (if present)...$(RESET)"
+	@for svc in psi-alert-eventsource-svc annotation-ready-eventsource-svc; do \
+		if kubectl get svc $$svc -n $(K8S_NAMESPACE) >/dev/null 2>&1; then \
+			until [ -n "$$(kubectl get endpoints $$svc -n $(K8S_NAMESPACE) -o jsonpath='{.subsets[*].addresses[*].ip}' 2>/dev/null)" ]; do \
+				echo "  waiting for endpoint on $$svc..."; sleep 3; \
+			done; \
+		fi; \
+	done
+	@echo "$(GREEN)Downstream dependency waits complete.$(RESET)"
 
 k3d.status: ## Show pods, services, and endpoints
 	@echo "$(CYAN)Pods (ml-system):$(RESET)"

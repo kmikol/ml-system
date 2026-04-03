@@ -274,7 +274,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "drift_psi_class_distribution{model_version=~\"$model_version\"} >= 0",
+          "expr": "(drift_psi_class_distribution{model_version=~\"$model_version\"} >= 0) and on(model_version) (max_over_time(drift_window_version_sample_count{model_version=~\"$model_version\"}[5m]) > 0)",
           "legendFormat": "PSI {{model_version}}",
           "refId": "A"
         }
@@ -949,18 +949,18 @@
           "type": "prometheus",
           "uid": "prometheus"
         },
-        "definition": "label_values(drift_psi_class_distribution, model_version)",
+        "definition": "query_result(sum by (model_version) (max_over_time(drift_window_version_sample_count[5m]) > 0))",
         "hide": 0,
         "includeAll": true,
         "multi": true,
         "name": "model_version",
         "options": [],
         "query": {
-          "query": "label_values(drift_psi_class_distribution, model_version)",
+          "query": "query_result(sum by (model_version) (max_over_time(drift_window_version_sample_count[5m]) > 0))",
           "refId": "StandardVariableQuery"
         },
         "refresh": 2,
-        "regex": "",
+        "regex": "/model_version=\"([^\"]+)\"/",
         "sort": 1,
         "type": "query",
         "label": "Model Version"

@@ -83,6 +83,12 @@ spec:
           env:
             - name: GF_SECURITY_ADMIN_PASSWORD
               value: {{ .Values.grafana.adminPassword | quote }}
+            {{- if .Values.grafana.rootUrl }}
+            - name: GF_SERVER_ROOT_URL
+              value: {{ .Values.grafana.rootUrl | quote }}
+            {{- end }}
+            - name: GF_SERVER_SERVE_FROM_SUB_PATH
+              value: {{ .Values.grafana.serveFromSubPath | quote }}
           ports:
             - containerPort: {{ .Values.grafana.port }}
           readinessProbe:

@@ -26,6 +26,7 @@ import random
 import sys
 import threading
 import time
+import urllib.parse
 import urllib.error
 import urllib.request
 from collections import defaultdict
@@ -64,6 +65,21 @@ def _percentile(data: list[float], p: float) -> float:
     pos = (len(s) - 1) * p / 100
     lo, hi = int(pos), min(int(pos) + 1, len(s) - 1)
     return s[lo] + (s[hi] - s[lo]) * (pos - lo)
+
+
+def _detect_default_url() -> str:
+    candidates = [
+        ("http://localhost/serving", "http://localhost/serving/health"),
+        ("http://localhost:8000", "http://localhost:8000/health"),
+    ]
+    for base, health in candidates:
+        try:
+            with urllib.request.urlopen(health, timeout=2) as resp:
+                if resp.status == 200:
+                    return urllib.parse.urljoin(base + "/", "predict")
+        except Exception:
+            continue
+    return "http://localhost/serving/predict"
 
 
 def _send(url: str) -> None:
@@ -140,8 +156,9 @@ def main() -> None:
     parser.add_argument(
         "--ramp-down", type=float, default=0.0, help="Ramp-down seconds (default: 0)"
     )
-    parser.add_argument("--url", default="http://localhost:8000/predict")
+    parser.add_argument("--url", default=None)
     args = parser.parse_args()
+    url = args.url or _detect_default_url()
 
     _pool.extend(_load_pool())
 
@@ -154,7 +171,7 @@ def main() -> None:
         f"(ramp-up {args.ramp_up}s / steady / ramp-down {args.ramp_down}s)"
     )
     print(f"Total       : ~{total_expected_final:.0f} requests")
-    print(f"Target      : {args.url}")
+    print(f"Target      : {url}")
     print("Ctrl-C to stop early\n")
 
     start = time.perf_counter()
@@ -185,7 +202,7 @@ def main() -> None:
         # Fire if we're behind the expected cumulative count.
         target = _total_expected(elapsed, args.rate, args.ramp_up, args.duration, args.ramp_down)
         if sent < target:
-            threading.Thread(target=_send, args=(args.url,), daemon=True).start()
+            threading.Thread(target=_send, args=(url,), daemon=True).start()
             sent += 1
             continue  # re-check immediately in case we're still behind
 

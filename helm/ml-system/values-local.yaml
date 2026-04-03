@@ -14,9 +14,6 @@ global:
 
 serving:
   replicas: 1
-  service:
-    type: NodePort
-    nodePort: 30000
   env:
     MLFLOW_TRACKING_URI: "http://mlflow:5000"
     MLFLOW_S3_ENDPOINT_URL: "http://minio:9000"
@@ -24,20 +21,13 @@ serving:
     MODEL_STAGE: "Production"
     SERVING_SIMULATED_LATENCY_MS: "100"
 
-mlflow:
-  service:
-    type: NodePort
-    nodePort: 30001
+ingress:
+  enabled: true
+  host: ""
 
 grafana:
-  service:
-    type: NodePort
-    nodePort: 30002
-
-prometheus:
-  service:
-    type: NodePort
-    nodePort: 30003
+  rootUrl: "%(protocol)s://%(domain)s/grafana/"
+  serveFromSubPath: true
 
 postgres:
   service:
@@ -46,9 +36,7 @@ postgres:
 
 minio:
   service:
-    type: NodePort
-    apiNodePort: 30006
-    consoleNodePort: 30004
+    type: ClusterIP
 
 mlExporter:
   enabled: true

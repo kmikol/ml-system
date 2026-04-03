@@ -66,6 +66,8 @@ prometheus:
   enabled: true
   image: prom/prometheus:v2.50.0
   port: 9090
+  externalUrl: ""
+  routePrefix: ""
   persistence:
     size: 5Gi
   service:
@@ -83,6 +85,8 @@ grafana:
   image: grafana/grafana:10.3.0
   port: 3000
   adminPassword: admin
+  rootUrl: ""
+  serveFromSubPath: false
   persistence:
     size: 1Gi
   service:
@@ -151,3 +155,18 @@ mlExporter:
     limits: { memory: "512Mi", cpu: "250m" }
   service:
     type: ClusterIP
+
+ingress:
+  enabled: false
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/rewrite-target: "/$1"
+  host: localhost
+  paths:
+    serving: /serving/?(.*)
+    mlflow: /mlflow/(.*)
+    grafana: /grafana/?(.*)
+    prometheus: /prometheus/?(.*)
+    minioApi: /minio/?(.*)
+    minioConsole: /minio-console/?(.*)

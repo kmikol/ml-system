@@ -94,13 +94,9 @@ help: ## Show this help
 #   named `k3d-{cluster-name}` and sets it as current.
 #
 # Port map (host → NodePort → service):
-#   localhost:8000  →  30000  →  fastapi-serving
-#   localhost:5000  →  30001  →  mlflow
-#   localhost:3000  →  30002  →  grafana
-#   localhost:9090  →  30003  →  prometheus
-#   localhost:9001  →  30004  →  minio console
+#   localhost:80    →  30080  →  ingress-nginx (HTTP)
+#   localhost:443   →  30443  →  ingress-nginx (HTTPS)
 #   localhost:5432  →  30005  →  postgres
-#   localhost:9000  →  30006  →  minio API
 #   localhost:2746  →  30007  →  argo-workflows UI
 #
 # First-time setup (one command):
@@ -126,7 +122,7 @@ help: ## Show this help
 #
 # ═══════════════════════════════════════════════════════════════
 
-.PHONY: k3d.bootstrap k3d.bootstrap.workflow k3d.create k3d.delete.data k3d.delete.all k3d.build k3d.import k3d.deploy k3d.wait.downstreams k3d.status k3d.logs k3d.shell k3d.redeploy k3d.train k3d.annotate k3d.serve.restart k3d.keda.install k3d.ml-exporter.restart k3d.argo.install
+.PHONY: k3d.bootstrap k3d.bootstrap.workflow k3d.create k3d.delete.data k3d.delete.all k3d.build k3d.import k3d.deploy k3d.wait.downstreams k3d.status k3d.logs k3d.shell k3d.redeploy k3d.train k3d.annotate k3d.serve.restart k3d.keda.install k3d.ml-exporter.restart k3d.argo.install k3d.ingress.install
 
 k3d.keda.install: ## Install KEDA into the cluster (run once after k3d.create)
 	@echo "$(CYAN)Installing KEDA...$(RESET)"
@@ -158,34 +154,47 @@ k3d.argo.install: ## Install Argo Workflows + Argo Events into the cluster (run 
 	@echo "$(GREEN)Argo Workflows UI: http://localhost:2746$(RESET)"
 	@echo "$(GREEN)Argo Workflows + Argo Events installed. Run 'make k3d.deploy' to apply EventBus/EventSource/Sensor.$(RESET)"
 
-k3d.bootstrap: ## First-time setup: create cluster, install KEDA+Argo, build+import images, deploy, run bootstrap workflow
+k3d.ingress.install: ## Install ingress-nginx into the cluster (run once after k3d.create)
+	@echo "$(CYAN)Installing ingress-nginx...$(RESET)"
+	helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx 2>/dev/null || true
+	helm repo update ingress-nginx
+	helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
+		--namespace ingress-nginx \
+		--create-namespace \
+		--set controller.service.type=NodePort \
+		--set controller.service.nodePorts.http=30080 \
+		--set controller.service.nodePorts.https=30443 \
+		--wait
+	@echo "$(GREEN)ingress-nginx installed. HTTP/HTTPS are exposed on localhost:80/443.$(RESET)"
+
+k3d.bootstrap: ## First-time setup: create cluster, install KEDA+Argo+Ingress, build+import images, deploy, run bootstrap workflow
 	@echo "$(CYAN)╔══════════════════════════════════════════════════════╗$(RESET)"
 	@echo "$(CYAN)║  k3d bootstrap - full first-time startup             ║$(RESET)"
 	@echo "$(CYAN)╚══════════════════════════════════════════════════════╝$(RESET)"
 	@echo ""
-	@echo "$(CYAN)[1/8] Creating k3d cluster...$(RESET)"
+	@echo "$(CYAN)[1/9] Creating k3d cluster...$(RESET)"
 	@$(MAKE) --no-print-directory k3d.create
 	@echo ""
-	@echo "$(CYAN)[2/8] Installing KEDA...$(RESET)"
+	@echo "$(CYAN)[2/9] Installing KEDA...$(RESET)"
 	@$(MAKE) --no-print-directory k3d.keda.install
 	@echo ""
-	@echo "$(CYAN)[3/8] Installing Argo Workflows + Argo Events...$(RESET)"
+	@echo "$(CYAN)[3/9] Installing Argo Workflows + Argo Events...$(RESET)"
 	@$(MAKE) --no-print-directory k3d.argo.install
 	@echo ""
-	@echo "$(CYAN)[4/8] Preparing dataset (download + partition + assign UUIDs)...$(RESET)"
+	@echo "$(CYAN)[4/9] Installing ingress-nginx...$(RESET)"
+	@$(MAKE) --no-print-directory k3d.ingress.install
+	@echo ""
+	@echo "$(CYAN)[5/9] Preparing dataset (download + partition + assign UUIDs)...$(RESET)"
 	@$(MAKE) --no-print-directory data.prepare
 	@echo ""
-	@echo "$(CYAN)[5/8] Building Docker images (data/v0/ + scripts/ baked into training image after prepare)...$(RESET)"
+	@echo "$(CYAN)[6/9] Building Docker images (data/v0/ + scripts/ baked into training image after prepare)...$(RESET)"
 	@$(MAKE) --no-print-directory k3d.build
 	@echo ""
-	@echo "$(CYAN)[6/8] Importing images into k3d...$(RESET)"
+	@echo "$(CYAN)[7/9] Importing images into k3d...$(RESET)"
 	@$(MAKE) --no-print-directory k3d.import
 	@echo ""
-	@echo "$(CYAN)[7/8] Deploying services with Helm...$(RESET)"
-	@$(MAKE) --no-print-directory k3d.deploy
-	@echo ""
-	@echo "$(CYAN)[8/9] Waiting for downstream dependencies (Prometheus/KEDA/Argo Events webhooks)...$(RESET)"
-	@$(MAKE) --no-print-directory k3d.wait.downstreams
+	@echo "$(CYAN)[8/9] Deploying services with Helm (WAIT=1)...$(RESET)"
+	@$(MAKE) --no-print-directory k3d.deploy WAIT=1
 	@echo ""
 	@echo "$(CYAN)[9/9] Submitting bootstrap-init Argo workflow (seed → verify → train → restart-serving)...$(RESET)"
 	@$(MAKE) --no-print-directory k3d.bootstrap.workflow
@@ -228,23 +237,15 @@ k3d.create: ## Create k3d cluster with port mappings
 	@echo "$(CYAN)Creating k3d cluster '$(K3D_CLUSTER)'...$(RESET)"
 	@echo ""
 	@echo "  Port mapping (set at creation, immutable after):"
-	@echo "    localhost:8000  →  NodePort 30000  (serving)"
-	@echo "    localhost:5000  →  NodePort 30001  (mlflow)"
-	@echo "    localhost:3000  →  NodePort 30002  (grafana)"
-	@echo "    localhost:9090  →  NodePort 30003  (prometheus)"
-	@echo "    localhost:9001  →  NodePort 30004  (minio console)"
+	@echo "    localhost:80    →  NodePort 30080  (ingress-nginx HTTP)"
+	@echo "    localhost:443   →  NodePort 30443  (ingress-nginx HTTPS)"
 	@echo "    localhost:5432  →  NodePort 30005  (postgres)"
-	@echo "    localhost:9000  →  NodePort 30006  (minio API)"
 	@echo "    localhost:2746  →  NodePort 30007  (argo-workflows UI)"
 	@echo ""
 	k3d cluster create $(K3D_CLUSTER) \
-		--port "8000:30000@server:0" \
-		--port "5000:30001@server:0" \
-		--port "3000:30002@server:0" \
-		--port "9090:30003@server:0" \
-		--port "9001:30004@server:0" \
+		--port "80:30080@server:0" \
+		--port "443:30443@server:0" \
 		--port "5432:30005@server:0" \
-		--port "9000:30006@server:0" \
 		--port "2746:30007@server:0" \
 		--k3s-arg "--disable=traefik@server:0"
 	kubectl create namespace $(K8S_NAMESPACE) --dry-run=client -o yaml | kubectl apply -f -
@@ -252,7 +253,7 @@ k3d.create: ## Create k3d cluster with port mappings
 	@echo ""
 	@echo "$(GREEN)Cluster ready.$(RESET)"
 	@echo ""
-	@echo "  First-time setup: make k3d.keda.install && make k3d.build && make k3d.import && make k3d.deploy"
+	@echo "  First-time setup: make k3d.keda.install && make k3d.argo.install && make k3d.ingress.install && make k3d.build && make k3d.import && make k3d.deploy"
 	@echo "  Or run everything at once: make k3d.bootstrap"
 
 
@@ -317,6 +318,15 @@ k3d.wait.downstreams: ## Wait for critical downstream dependencies that cause st
 		wget -qO- 'http://localhost:9090/api/v1/query?query=up' >/dev/null 2>&1; do \
 		echo "  waiting for prometheus query API..."; sleep 3; \
 	done
+	@echo "$(CYAN)Resyncing KEDA after Prometheus is live (prevents startup race latch)...$(RESET)"
+	@kubectl get deployment keda-operator -n keda >/dev/null 2>&1 && \
+		kubectl rollout restart deployment/keda-operator -n keda && \
+		kubectl rollout status deployment/keda-operator -n keda --timeout=$${TIMEOUT:-120s} || \
+		echo "$(YELLOW)keda-operator not found; skipping KEDA operator resync.$(RESET)"
+	@kubectl get deployment keda-operator-metrics-apiserver -n keda >/dev/null 2>&1 && \
+		kubectl rollout restart deployment/keda-operator-metrics-apiserver -n keda && \
+		kubectl rollout status deployment/keda-operator-metrics-apiserver -n keda --timeout=$${TIMEOUT:-120s} || \
+		echo "$(YELLOW)keda-operator-metrics-apiserver not found; skipping metrics-apiserver resync.$(RESET)"
 	@echo "$(CYAN)Waiting for KEDA external metrics APIService...$(RESET)"
 	@kubectl get apiservice v1beta1.external.metrics.k8s.io >/dev/null 2>&1 && \
 		kubectl wait --for=condition=Available apiservice/v1beta1.external.metrics.k8s.io --timeout=$${TIMEOUT:-120s} || \
@@ -325,6 +335,13 @@ k3d.wait.downstreams: ## Wait for critical downstream dependencies that cause st
 	@kubectl get scaledobject fastapi-serving-scaler -n $(K8S_NAMESPACE) >/dev/null 2>&1 && \
 		kubectl wait --for=jsonpath='{.status.conditions[?(@.type=="Ready")].status}'=True \
 		scaledobject/fastapi-serving-scaler -n $(K8S_NAMESPACE) --timeout=$${TIMEOUT:-120s} || true
+	@echo "$(CYAN)Waiting for ingress-nginx controller readiness (if installed)...$(RESET)"
+	@kubectl get deployment ingress-nginx-controller -n ingress-nginx >/dev/null 2>&1 && \
+		kubectl rollout status deployment/ingress-nginx-controller -n ingress-nginx --timeout=$${TIMEOUT:-120s} || \
+		echo "$(YELLOW)ingress-nginx controller not found; skipping this wait.$(RESET)"
+	@echo "$(CYAN)Waiting for ingress class nginx (if installed)...$(RESET)"
+	@kubectl get ingressclass nginx >/dev/null 2>&1 || \
+		echo "$(YELLOW)ingress class nginx not found; skipping this wait.$(RESET)"
 	@echo "$(CYAN)Waiting for Argo Events webhook endpoints (if present)...$(RESET)"
 	@for svc in psi-alert-eventsource-svc annotation-ready-eventsource-svc; do \
 		if kubectl get svc $$svc -n $(K8S_NAMESPACE) >/dev/null 2>&1; then \
@@ -349,13 +366,13 @@ k3d.status: ## Show pods, services, and endpoints
 	@kubectl get svc -n $(K8S_NAMESPACE)
 	@echo ""
 	@echo "$(CYAN)Access:$(RESET)"
-	@echo "  Serving:          http://localhost:8000"
-	@echo "  MLflow:           http://localhost:5000"
-	@echo "  Grafana:          http://localhost:3000  (admin/admin)"
-	@echo "  Prometheus:       http://localhost:9090"
+	@echo "  Serving:          http://localhost/serving"
+	@echo "  MLflow:           http://localhost/mlflow"
+	@echo "  Grafana:          http://localhost/grafana  (admin/admin)"
+	@echo "  Prometheus:       http://localhost/prometheus"
+	@echo "  MinIO console:    http://localhost/minio-console  (minioadmin/minioadmin)"
+	@echo "  MinIO API:        http://localhost/minio  (minioadmin/minioadmin)"
 	@echo "  Argo Workflows:   http://localhost:2746"
-	@echo "  MinIO console:    http://localhost:9001  (minioadmin/minioadmin)"
-	@echo "  MinIO API:        http://localhost:9000  (minioadmin/minioadmin)"
 	@echo "  Postgres:         localhost:5432         (mlflow/mlflow, db=mlflow)"
 
 k3d.logs: ## Tail logs for a deployment (POD=fastapi-serving)
@@ -611,20 +628,26 @@ test.model_artifact_controller.integration: ## Run model_artifact_controller int
 
 serve.test: ## Smoke test against running serving (works with compose or k3d)
 	@echo "$(CYAN)Health:$(RESET)"
-	@curl -s http://localhost:8000/health | python3 -m json.tool
+	@SERVE_BASE=$${SERVE_BASE:-$$(if curl -fsS http://localhost/serving/health >/dev/null 2>&1; then echo http://localhost/serving; else echo http://localhost:8000; fi)}; \
+	curl -s $${SERVE_BASE}/health | python3 -m json.tool
 	@echo "\n$(CYAN)Predict:$(RESET)"
-	@python3 -c "import json; print(json.dumps({'image': [[0.0]*14 for _ in range(14)]}))" \
-		| curl -s -X POST http://localhost:8000/predict \
+	@SERVE_BASE=$${SERVE_BASE:-$$(if curl -fsS http://localhost/serving/health >/dev/null 2>&1; then echo http://localhost/serving; else echo http://localhost:8000; fi)}; \
+	python3 -c "import json; print(json.dumps({'image': [[0.0]*14 for _ in range(14)]}))" \
+		| curl -s -X POST $${SERVE_BASE}/predict \
 		-H "Content-Type: application/json" \
 		-d @- \
 		| python3 -m json.tool
 
 serve.test.load: ## Send requests with ramp-up/down (RATE=5 DURATION=60 RAMP_UP=0 RAMP_DOWN=0)
-	python3 scripts/load_test.py --rate $${RATE:-5} --duration $${DURATION:-60} \
+	@SERVE_BASE=$${SERVE_BASE:-$$(if curl -fsS http://localhost/serving/health >/dev/null 2>&1; then echo http://localhost/serving; else echo http://localhost:8000; fi)}; \
+	python3 scripts/load_test.py --url $${SERVE_BASE}/predict \
+		--rate $${RATE:-5} --duration $${DURATION:-60} \
 		--ramp-up $${RAMP_UP:-0} --ramp-down $${RAMP_DOWN:-0}
 
 serve.test.drift: ## Send inverted images with ramping probability (RATE=5 DURATION=120 INVERSION_PROB=1.0 RAMP=60)
-	python3 scripts/drift_test.py --rate $${RATE:-5} --duration $${DURATION:-120} \
+	@SERVE_BASE=$${SERVE_BASE:-$$(if curl -fsS http://localhost/serving/health >/dev/null 2>&1; then echo http://localhost/serving; else echo http://localhost:8000; fi)}; \
+	python3 scripts/drift_test.py --url $${SERVE_BASE}/predict \
+		--rate $${RATE:-5} --duration $${DURATION:-120} \
 		--inversion-probability $${INVERSION_PROB:-1.0} --ramp $${RAMP:-60}
 
 clean.pyc: ## Remove Python cache

@@ -80,11 +80,21 @@ spec:
             - --config.file=/etc/prometheus/prometheus.yml
             - --storage.tsdb.path=/prometheus
             - --web.enable-remote-write-receiver
+            {{- if .Values.prometheus.externalUrl }}
+            - --web.external-url={{ .Values.prometheus.externalUrl }}
+            {{- end }}
+            {{- if .Values.prometheus.routePrefix }}
+            - --web.route-prefix={{ .Values.prometheus.routePrefix }}
+            {{- end }}
           ports:
             - containerPort: {{ .Values.prometheus.port }}
           readinessProbe:
             httpGet:
+              {{- if .Values.prometheus.routePrefix }}
+              path: {{ .Values.prometheus.routePrefix }}/-/ready
+              {{- else }}
               path: /-/ready
+              {{- end }}
               port: {{ .Values.prometheus.port }}
             initialDelaySeconds: 5
             periodSeconds: 5

@@ -17,11 +17,19 @@ Run from repo root: PYTHONPATH=. pytest tests/helm/ -v
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
 import yaml
+
+# Skip the entire module when helm is not installed.
+# In CI, azure/setup-helm@v4 installs it before running this file.
+pytestmark = pytest.mark.skipif(
+    shutil.which("helm") is None,
+    reason="helm binary not found on PATH — install helm 3 to run chart tests",
+)
 
 CHART_DIR = Path("helm/ml-system")
 VALUES_DEFAULT = CHART_DIR / "values.yaml"

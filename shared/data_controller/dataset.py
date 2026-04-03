@@ -344,7 +344,6 @@ class DatasetController(_DataControllerBase):
             with conn.cursor() as cur:
                 cur.execute(_SELECT_ALL_SAMPLES_FOR_VERSION, (version_id,))
                 rows = cur.fetchall()
-            conn.commit()
         except Exception as exc:
             raise DataControllerError(
                 f"Failed to query samples for version '{version_id}': {exc}"

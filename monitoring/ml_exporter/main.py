@@ -410,7 +410,9 @@ class DriftPoller:
             for version in version_groups:
                 self._version_last_seen_ts[version] = now
 
-        retained_versions = self._retained_versions(now)
+        # Always process versions present in the current window, even when
+        # retention TTL is 0. TTL retention only controls absent versions.
+        retained_versions = set(version_groups) | self._retained_versions(now)
 
         # Compute per-version PSI. Versions retained by TTL but absent from the
         # current window emit the sentinel to make staleness explicit.

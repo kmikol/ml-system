@@ -34,7 +34,9 @@ class DriftDataController(_DataControllerBase):
             conn = self._connect()
             with conn.cursor() as cur:
                 cur.execute(_SELECT_WINDOW, (since, until, until, model_version, model_version))
-                return [_row_to_record(row) for row in cur.fetchall()]
+                records = [_row_to_record(row) for row in cur.fetchall()]
+            conn.commit()
+            return records
         except Exception as exc:
             raise DataControllerError(f"Failed to query predictions: {exc}") from exc
 
@@ -48,7 +50,9 @@ class DriftDataController(_DataControllerBase):
             conn = self._connect()
             with conn.cursor() as cur:
                 cur.execute(_COUNT_ANNOTATED)
-                return cur.fetchone()[0]
+                count = cur.fetchone()[0]
+            conn.commit()
+            return count
         except Exception as exc:
             raise DataControllerError(f"Failed to count annotated predictions: {exc}") from exc
 
@@ -58,6 +62,8 @@ class DriftDataController(_DataControllerBase):
             conn = self._connect()
             with conn.cursor() as cur:
                 cur.execute(_SELECT_LABELED, (since,))
-                return [_row_to_record(row) for row in cur.fetchall()]
+                records = [_row_to_record(row) for row in cur.fetchall()]
+            conn.commit()
+            return records
         except Exception as exc:
             raise DataControllerError(f"Failed to query labeled predictions: {exc}") from exc

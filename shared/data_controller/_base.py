@@ -36,8 +36,11 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 -- Inference log.  Each row is one prediction returned by the serving service.
 -- uuid is provided by the client when the origin sample is known; otherwise
 -- gen_random_uuid() assigns a fresh value so every prediction is recorded.
+-- uuid is intentionally non-unique because the same source sample can be
+-- observed multiple times over time.
 CREATE TABLE IF NOT EXISTS predictions (
-    uuid                    UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    id                      BIGSERIAL   PRIMARY KEY,
+    uuid                    UUID        NOT NULL DEFAULT gen_random_uuid(),
     timestamp               TIMESTAMPTZ NOT NULL,
     model_version           TEXT        NOT NULL,
     prediction              INTEGER     NOT NULL,
@@ -48,8 +51,11 @@ CREATE TABLE IF NOT EXISTS predictions (
                             CHECK (annotation_status IN ('none', 'candidate', 'annotated')),
     annotated_label         INTEGER
 );
+
 CREATE INDEX IF NOT EXISTS idx_predictions_timestamp
     ON predictions (timestamp);
+CREATE INDEX IF NOT EXISTS idx_predictions_uuid
+    ON predictions (uuid);
 CREATE INDEX IF NOT EXISTS idx_predictions_model_version
     ON predictions (model_version);
 CREATE INDEX IF NOT EXISTS idx_predictions_annotation_status
@@ -89,8 +95,7 @@ INSERT INTO predictions (
     uuid, timestamp, model_version,
     prediction, confidence, prediction_distribution, embedding,
     annotation_status, annotated_label
-) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-ON CONFLICT (uuid) DO NOTHING;
+) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s);
 """
 
 _SELECT_WINDOW = """

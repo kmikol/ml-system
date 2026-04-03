@@ -207,6 +207,7 @@ class DatasetController(_DataControllerBase):
             with conn.cursor() as cur:
                 cur.execute(_SELECT_LATEST_VERSION)
                 row = cur.fetchone()
+            conn.commit()
             return row[0] if row else None
         except Exception as exc:
             raise DataControllerError(f"Failed to query latest version: {exc}") from exc
@@ -227,6 +228,7 @@ class DatasetController(_DataControllerBase):
             with conn.cursor() as cur:
                 cur.execute(_SELECT_SPLIT, (version_id, split))
                 rows = cur.fetchall()
+            conn.commit()
         except Exception as exc:
             raise DataControllerError(
                 f"Failed to query split '{split}' for version '{version_id}': {exc}"
@@ -253,6 +255,7 @@ class DatasetController(_DataControllerBase):
             with conn.cursor() as cur:
                 cur.execute(_SELECT_UNVERSIONED_ANNOTATIONS)
                 rows = cur.fetchall()
+            conn.commit()
             return [{"uuid": uuid, "label": label} for uuid, label in rows]
         except Exception as exc:
             raise DataControllerError(f"Failed to query unversioned annotations: {exc}") from exc
@@ -341,6 +344,7 @@ class DatasetController(_DataControllerBase):
             with conn.cursor() as cur:
                 cur.execute(_SELECT_ALL_SAMPLES_FOR_VERSION, (version_id,))
                 rows = cur.fetchall()
+            conn.commit()
         except Exception as exc:
             raise DataControllerError(
                 f"Failed to query samples for version '{version_id}': {exc}"
@@ -447,6 +451,7 @@ class DatasetController(_DataControllerBase):
             with conn.cursor() as cur:
                 cur.execute(_SELECT_VERSION, (version_id,))
                 row = cur.fetchone()
+            conn.commit()
             if row is None:
                 return None
             return {
@@ -473,6 +478,7 @@ class DatasetController(_DataControllerBase):
             with conn.cursor() as cur:
                 cur.execute(_SELECT_VERSION_HISTORY)
                 rows = cur.fetchall()
+            conn.commit()
             return [
                 {
                     "version_id": row[0],

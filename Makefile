@@ -285,7 +285,7 @@ k3d.import: ## Import custom images into k3d's container runtime
 	k3d image import $(IMG_TRAINING) -c $(K3D_CLUSTER)
 	@echo "$(GREEN)Images imported.$(RESET)"
 
-k3d.deploy: ## Deploy (or upgrade) all services with Helm, then apply Argo Events CRD instances
+k3d.deploy: ## Deploy (or upgrade) all services with Helm, then apply Argo Events CRD instances (fast by default; WAIT=1 for blocking readiness)
 	@echo "$(CYAN)Deploying with Helm...$(RESET)"
 	helm upgrade --install $(HELM_RELEASE) $(HELM_CHART) \
 		-f $(HELM_CHART)/values-local.yaml \
@@ -295,11 +295,14 @@ k3d.deploy: ## Deploy (or upgrade) all services with Helm, then apply Argo Event
 	kubectl apply --server-side --force-conflicts -f k8s/argo/argo-events-resources.yaml
 	kubectl apply --server-side --force-conflicts -f k8s/argo/workflows/
 	@echo ""
-	@echo "$(GREEN)Deployed. Waiting for pods...$(RESET)"
-	kubectl wait --for=condition=available deployment --all \
-		-n $(K8S_NAMESPACE) --timeout=180s 2>/dev/null || true
-	@echo ""
-	@$(MAKE) --no-print-directory k3d.status
+	@echo "$(GREEN)Deployed.$(RESET)"
+	@if [ "$(WAIT)" = "1" ]; then \
+		echo "$(CYAN)WAIT=1 set: waiting for deployments to become available...$(RESET)"; \
+		kubectl wait --for=condition=available deployment --all \
+			-n $(K8S_NAMESPACE) --timeout=$${TIMEOUT:-120s}; \
+	else \
+		echo "$(YELLOW)Skipping blocking waits (fast mode). Use 'make k3d.deploy WAIT=1' for readiness waits.$(RESET)"; \
+	fi
 
 k3d.status: ## Show pods, services, and endpoints
 	@echo "$(CYAN)Pods (ml-system):$(RESET)"
@@ -345,14 +348,26 @@ k3d.shell: ## Open a shell in a pod (POD=fastapi-serving)
 		kubectl exec -it deployment/$(POD) -n $(K8S_NAMESPACE) -- /bin/sh; \
 	fi
 
-k3d.redeploy: k3d.build k3d.import k3d.deploy ## Rebuild, import, and redeploy (full cycle)
+k3d.redeploy: k3d.build k3d.import k3d.deploy ## Rebuild, import, and redeploy (fast by default; WAIT=1 to block on rollout)
 	@# Force rolling restart of deployments that use custom images.
 	@# Required because imagePullPolicy:Never + latest tag means k8s won't
 	@# detect that the image content changed after k3d image import.
 	kubectl rollout restart deployment/fastapi-serving deployment/mlflow deployment/grafana deployment/alloy deployment/prometheus deployment/alertmanager -n $(K8S_NAMESPACE)
 	@kubectl get deployment ml-exporter -n $(K8S_NAMESPACE) &>/dev/null && \
 		kubectl rollout restart deployment/ml-exporter -n $(K8S_NAMESPACE) || true
-	kubectl rollout status deployment/fastapi-serving deployment/mlflow deployment/grafana deployment/alloy deployment/prometheus deployment/alertmanager -n $(K8S_NAMESPACE) --timeout=120s
+	@if [ "$(WAIT)" = "1" ]; then \
+		echo "$(CYAN)WAIT=1 set: waiting for rollout completion...$(RESET)"; \
+		kubectl rollout status deployment/fastapi-serving -n $(K8S_NAMESPACE) --timeout=$${TIMEOUT:-120s}; \
+		kubectl rollout status deployment/mlflow -n $(K8S_NAMESPACE) --timeout=$${TIMEOUT:-120s}; \
+		kubectl rollout status deployment/grafana -n $(K8S_NAMESPACE) --timeout=$${TIMEOUT:-120s}; \
+		kubectl rollout status deployment/alloy -n $(K8S_NAMESPACE) --timeout=$${TIMEOUT:-120s}; \
+		kubectl rollout status deployment/prometheus -n $(K8S_NAMESPACE) --timeout=$${TIMEOUT:-120s}; \
+		kubectl rollout status deployment/alertmanager -n $(K8S_NAMESPACE) --timeout=$${TIMEOUT:-120s}; \
+		kubectl get deployment ml-exporter -n $(K8S_NAMESPACE) &>/dev/null && \
+			kubectl rollout status deployment/ml-exporter -n $(K8S_NAMESPACE) --timeout=$${TIMEOUT:-120s} || true; \
+	else \
+		echo "$(YELLOW)Skipping rollout status waits (fast mode). Use 'make k3d.redeploy WAIT=1' to wait.$(RESET)"; \
+	fi
 	@echo "$(GREEN)Redeploy complete.$(RESET)"
 
 k3d.ml-exporter.restart: ## Restart ml-exporter pod

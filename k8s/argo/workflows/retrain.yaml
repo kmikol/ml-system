@@ -23,7 +23,7 @@
 ---
 # ServiceAccount for the retrain workflow.
 # Needs workflowtaskresults access (required by Argo emissary executor)
-# and deployment patch/get so it can roll out a specific model version.
+# and deployment get/list/watch/patch so rollout status can observe progress.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -41,7 +41,7 @@ rules:
     verbs: [create, patch]
   - apiGroups: [apps]
     resources: [deployments]
-    verbs: [get, patch]
+    verbs: [get, list, watch, patch]
 
 ---
 apiVersion: rbac.authorization.k8s.io/v1

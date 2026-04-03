@@ -47,7 +47,9 @@ class AnnotationDataController(_DataControllerBase):
             conn = self._connect()
             with conn.cursor() as cur:
                 cur.execute(_GET_CANDIDATES, (limit,))
-                return [row[0] for row in cur.fetchall()]
+                candidates = [row[0] for row in cur.fetchall()]
+            conn.commit()
+            return candidates
         except Exception as exc:
             raise DataControllerError(f"Failed to fetch candidates: {exc}") from exc
 

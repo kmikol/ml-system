@@ -25,5 +25,8 @@ jobs:
       - name: Install docs dependencies
         run: pip install -r docs/docs-requirements.txt
 
+      - name: Generate schema docs tables
+        run: python3 docs/scripts/generate_schema_tables_docs.py
+
       - name: Deploy to GitHub Pages
         run: mkdocs gh-deploy -f docs/mkdocs.yml --force

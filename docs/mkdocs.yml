@@ -43,6 +43,15 @@ markdown_extensions:
         - .
         - ..
       check_paths: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+
+extra_javascript:
+  - https://unpkg.com/mermaid@10/dist/mermaid.min.js
+  - javascripts/mermaid-init.js
 
 validation:
   nav:
@@ -51,11 +60,16 @@ validation:
 nav:
   - Overview:
     - Home: index.md
-    - Architecture: architecture.md
   - Getting Started:
     - Setup: getting-started/setup.md
     - Running: getting-started/running.md
     - Useful Commands: getting-started/useful-commands.md
+  - Architecture:
+    - C4 Level 1: architecture.md
+  - Schemas:
+    - Schemas Index: schemas/index.md
+    - API Schemas: schemas/api.md
+    - Event and Record Schemas: schemas/records.md
   - ADRs:
     - ADR Index: adr/index.md
     - 001 Event-Driven Retraining: adr/001-event-driven-retraining.md

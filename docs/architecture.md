@@ -1,115 +1,61 @@
 # Architecture
 
-See the [home page](index.md) for the full diagram.
+## C4 Level 1: System Context
 
-## Request path
+This level describes the system at high level: primary users, external systems, and the core MLOps platform boundary.
 
-```
-Client
-  └─▶ Ingress Controller   (routes to cluster)
-        └─▶ Argo Rollout    (traffic routing + model rollout)
-              └─▶ Model Serving   (ONNX inference)
-                    ├─▶ Data Controller ──▶ Postgres  (prediction record)
-                    │                  └─▶ MinIO S3   (image bytes)
-                    └─▶ Logging ──▶ Alloy ──▶ Prometheus ──▶ Grafana
-```
+The `ml-system` platform serves model predictions and continuously adapts through monitoring, annotation, retraining, and rollout.
 
-KEDA watches the Prometheus requests/sec metric and scales the serving pods up or down accordingly.
+```mermaid
+flowchart LR
+                user[Client / Consumer]
+                annotator[Human Annotator]
 
-## Retraining loop
+                subgraph platform[ML System Platform]
+                        direction LR
+                        serving[Serving API]
+                        monitor[Monitoring and Drift Detection]
+                        sample[Sampling Service]
+                        annotation[Annotation Service]
+                        training[Training Pipeline]
+                        rollout[Model Rollout]
+                end
 
-```
-Drift Monitoring  ◀── Prometheus (drift signals)
-                  ◀── Data Controller (new annotation counts)
-                    │
-                    ▼
-             Retrain Controller
-                    │  (threshold crossed)
-                    ▼
-             Retrain Trigger ──▶ Training
-                                    ├─▶ Data Controller  (load dataset)
-                                    └─▶ Model Artifact Controller ──▶ MLflow
-                                                                        │
-                                                              new model registered
-                                                                        │
-                                                                        ▼
-                                                               Argo Rollout
-```
+                subgraph data_plane[Data and Artifact Plane]
+                        postgres[(Postgres)]
+                        minio[(MinIO S3)]
+                        mlflow[(MLflow)]
+                        metrics[(Prometheus)]
+                        dashboards[Grafana]
+                end
 
-## Annotation loop
+                user -->|predict| serving
+                serving -->|prediction logs| postgres
+                serving -->|sample payloads| minio
+                serving -->|metrics| metrics
 
-```
-Model Serving ──▶ Data Controller ──▶ Postgres (predictions with annotation_status='none')
-                                          │
-                                          ▼
-                                  Sampling Service
-                                  (scores candidates, marks annotation_status='candidate')
-                                          │
-                                          ▼
-                                  Annotation Service  ◀── Annotate Trigger
-                                  (human labels, writes annotation_status='annotated')
-                                          │
-                                          ▼
-                                  Data Controller ──▶ Postgres (label written)
+                monitor -->|reads metrics| metrics
+                monitor -->|drift signal| sample
+                sample -->|candidates| annotation
+                annotator -->|labels| annotation
+                annotation -->|annotations| postgres
+
+                training -->|load training data| postgres
+                training -->|load image arrays| minio
+                training -->|register model artifacts| mlflow
+                rollout -->|deploy promoted model| serving
+                training --> rollout
+
+                dashboards -->|visualize| metrics
 ```
 
-## Facades
+## Scope and Intent
 
-Two green-bordered facades isolate backend implementation details from the rest of the system.
+- Primary purpose: local-first MLOps experimentation with production-like control loops.
+- Main user interaction: prediction requests to serving and operational monitoring via dashboards.
+- Core feedback loop: drift detection -> annotation -> retraining -> model rollout.
 
-Boundary rule: Data Controller handles operational data (Postgres/MinIO), while Model Artifact Controller handles model artifact contracts (MLflow paths, model bundle lookup, registry alias resolution).
+## Next Levels
 
-### Data Controller
-
-Hides **Postgres** (prediction records, dataset metadata) and **MinIO S3** (image bytes). Each service gets a role-scoped subclass:
-
-| Subclass | Service | Operations |
-|----------|---------|------------|
-| `ServingDataController` | Model Serving | `store_prediction` |
-| `DriftDataController` | Drift Monitoring | `get_predictions`, `get_labeled_predictions` |
-| `SamplingDataController` | Sampling Service | `get_predictions`, `mark_candidate`, `count_labels_since` |
-| `AnnotationDataController` | Annotation Service | `write_label` |
-| `DatasetController` | Training | `store_sample`, `get_dataset_split` |
-| `FakeDataController` | Unit tests | Full surface, in-memory |
-
-### Model Artifact Controller
-
-Hides **MLflow**. Exposes a `ModelArtifactController` Protocol so the backend can be swapped without touching any caller:
-
-| Operation | Used by |
-|-----------|---------|
-| `start_run` / `log_params` / `log_metrics` / `log_artifacts` | Training |
-| `register_model` / `promote_model` | Training (post-run) |
-| `get_production_run_id` / `download_artifacts` | Model Serving |
-
-## Storage layout
-
-```
-Postgres
-├── predictions        — one row per inference (image, embedding, prediction, label, status)
-└── dataset_samples    — one row per training sample (metadata + MinIO path)
-
-MinIO S3
-└── mnist-dataset/
-    └── {date}/{uuid}.npy    — float32 image arrays
-
-MLflow artifacts (per training run)
-└── onnx/
-    ├── classifier/model.onnx
-    └── embedder/model.onnx
-    reference_distribution.json
-    class_gaussians.json
-    feature_schema.json
-```
-
-## Infrastructure
-
-| Component | Role |
-|-----------|------|
-| k3d / k3s | Local Kubernetes cluster |
-| Helm (`helm/ml-system`) | Service deployment |
-| KEDA | Horizontal pod autoscaling via Prometheus metrics |
-| Argo Rollout | Progressive model delivery |
-| Alloy | Log and metric collection agent |
-| Prometheus | Metrics store |
-| Grafana | Dashboards |
+- C4 Level 2 (Container): service boundaries, protocols, and runtime responsibilities.
+- C4 Level 3 (Component): internals of key services such as Serving, Data Controller, and Training.

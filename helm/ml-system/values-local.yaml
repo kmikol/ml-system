@@ -38,6 +38,9 @@ minio:
   service:
     type: ClusterIP
 
+canary:
+  enabled: true
+
 mlExporter:
   enabled: true
 

@@ -1,8 +1,13 @@
 {{- if .Values.ingress.enabled }}
+# ── Serving Ingress ─────────────────────────────────────────────────────────
+# Separated from the main ingress so Argo Rollouts can manage canary weight
+# annotations on this resource without affecting other service routes.
+# When canary is enabled, Argo Rollouts clones this ingress and adds
+# nginx.ingress.kubernetes.io/canary: "true" + canary-weight annotations.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: ml-system-ingress
+  name: ml-system-ingress-serving
   namespace: {{ .Values.global.namespace }}
   {{- if .Values.ingress.annotations }}
   annotations:
@@ -23,6 +28,25 @@ spec:
                 name: fastapi-serving
                 port:
                   number: {{ .Values.serving.port }}
+---
+# ── Main Ingress (non-serving routes) ──────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ml-system-ingress
+  namespace: {{ .Values.global.namespace }}
+  {{- if .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml .Values.ingress.annotations | nindent 4 }}
+  {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className | quote }}
+  rules:
+    - {{- if .Values.ingress.host }}
+      host: {{ .Values.ingress.host | quote }}
+      {{- end }}
+      http:
+        paths:
           - path: {{ .Values.ingress.paths.mlflow | quote }}
             pathType: ImplementationSpecific
             backend:

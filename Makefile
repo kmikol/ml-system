@@ -122,7 +122,7 @@ help: ## Show this help
 #
 # ═══════════════════════════════════════════════════════════════
 
-.PHONY: k3d.bootstrap k3d.bootstrap.workflow k3d.create k3d.delete.data k3d.delete.all k3d.build k3d.import k3d.deploy k3d.wait.downstreams k3d.status k3d.logs k3d.shell k3d.redeploy k3d.train k3d.annotate k3d.serve.restart k3d.keda.install k3d.ml-exporter.restart k3d.argo.install k3d.ingress.install
+.PHONY: k3d.bootstrap k3d.bootstrap.workflow k3d.create k3d.delete.data k3d.delete.all k3d.build k3d.import k3d.deploy k3d.wait.downstreams k3d.status k3d.logs k3d.shell k3d.redeploy k3d.train k3d.annotate k3d.serve.restart k3d.keda.install k3d.ml-exporter.restart k3d.argo.install k3d.argo-rollouts.install k3d.ingress.install
 
 k3d.keda.install: ## Install KEDA into the cluster (run once after k3d.create)
 	@echo "$(CYAN)Installing KEDA...$(RESET)"
@@ -167,36 +167,49 @@ k3d.ingress.install: ## Install ingress-nginx into the cluster (run once after k
 		--wait
 	@echo "$(GREEN)ingress-nginx installed. HTTP/HTTPS are exposed on localhost:80/443.$(RESET)"
 
-k3d.bootstrap: ## First-time setup: create cluster, install KEDA+Argo+Ingress, build+import images, deploy, run bootstrap workflow
+k3d.argo-rollouts.install: ## Install Argo Rollouts into the cluster (run once after k3d.create)
+	@echo "$(CYAN)Installing Argo Rollouts...$(RESET)"
+	helm repo add argo https://argoproj.github.io/argo-helm 2>/dev/null || true
+	helm repo update argo
+	helm upgrade --install argo-rollouts argo/argo-rollouts \
+		--namespace argo-rollouts \
+		--create-namespace \
+		--wait --timeout 120s
+	@echo "$(GREEN)Argo Rollouts installed.$(RESET)"
+
+k3d.bootstrap: ## First-time setup: create cluster, install KEDA+Argo+Ingress+Rollouts, build+import images, deploy, run bootstrap workflow
 	@echo "$(CYAN)╔══════════════════════════════════════════════════════╗$(RESET)"
 	@echo "$(CYAN)║  k3d bootstrap - full first-time startup             ║$(RESET)"
 	@echo "$(CYAN)╚══════════════════════════════════════════════════════╝$(RESET)"
 	@echo ""
-	@echo "$(CYAN)[1/9] Creating k3d cluster...$(RESET)"
+	@echo "$(CYAN)[1/10] Creating k3d cluster...$(RESET)"
 	@$(MAKE) --no-print-directory k3d.create
 	@echo ""
-	@echo "$(CYAN)[2/9] Installing KEDA...$(RESET)"
+	@echo "$(CYAN)[2/10] Installing KEDA...$(RESET)"
 	@$(MAKE) --no-print-directory k3d.keda.install
 	@echo ""
-	@echo "$(CYAN)[3/9] Installing Argo Workflows + Argo Events...$(RESET)"
+	@echo "$(CYAN)[3/10] Installing Argo Workflows + Argo Events...$(RESET)"
 	@$(MAKE) --no-print-directory k3d.argo.install
 	@echo ""
-	@echo "$(CYAN)[4/9] Installing ingress-nginx...$(RESET)"
+	@echo "$(CYAN)[4/10] Installing Argo Rollouts...$(RESET)"
+	@$(MAKE) --no-print-directory k3d.argo-rollouts.install
+	@echo ""
+	@echo "$(CYAN)[5/10] Installing ingress-nginx...$(RESET)"
 	@$(MAKE) --no-print-directory k3d.ingress.install
 	@echo ""
-	@echo "$(CYAN)[5/9] Preparing dataset (download + partition + assign UUIDs)...$(RESET)"
+	@echo "$(CYAN)[6/10] Preparing dataset (download + partition + assign UUIDs)...$(RESET)"
 	@$(MAKE) --no-print-directory data.prepare
 	@echo ""
-	@echo "$(CYAN)[6/9] Building Docker images (data/v0/ + scripts/ baked into training image after prepare)...$(RESET)"
+	@echo "$(CYAN)[7/10] Building Docker images (data/v0/ + scripts/ baked into training image after prepare)...$(RESET)"
 	@$(MAKE) --no-print-directory k3d.build
 	@echo ""
-	@echo "$(CYAN)[7/9] Importing images into k3d...$(RESET)"
+	@echo "$(CYAN)[8/10] Importing images into k3d...$(RESET)"
 	@$(MAKE) --no-print-directory k3d.import
 	@echo ""
-	@echo "$(CYAN)[8/9] Deploying services with Helm (WAIT=1)...$(RESET)"
+	@echo "$(CYAN)[9/10] Deploying services with Helm (WAIT=1)...$(RESET)"
 	@$(MAKE) --no-print-directory k3d.deploy WAIT=1
 	@echo ""
-	@echo "$(CYAN)[9/9] Submitting bootstrap-init Argo workflow (seed → verify → train → restart-serving)...$(RESET)"
+	@echo "$(CYAN)[10/10] Submitting bootstrap-init Argo workflow (seed → verify → train → restart-serving)...$(RESET)"
 	@$(MAKE) --no-print-directory k3d.bootstrap.workflow
 	@echo ""
 	@echo "$(GREEN)╔══════════════════════════════════════════════════════╗$(RESET)"
@@ -397,15 +410,33 @@ k3d.shell: ## Open a shell in a pod (POD=fastapi-serving)
 	fi
 
 k3d.redeploy: k3d.build k3d.import k3d.deploy ## Rebuild, import, and redeploy (fast by default; WAIT=1 to block on rollout)
-	@# Force rolling restart of deployments that use custom images.
+	@# Force rolling restart of workloads that use custom images.
 	@# Required because imagePullPolicy:Never + latest tag means k8s won't
 	@# detect that the image content changed after k3d image import.
-	kubectl rollout restart deployment/fastapi-serving deployment/mlflow deployment/grafana deployment/alloy deployment/prometheus deployment/alertmanager -n $(K8S_NAMESPACE)
+	@# Serving may be an Argo Rollout or a plain Deployment depending on canary.enabled.
+	@if kubectl get rollout fastapi-serving -n $(K8S_NAMESPACE) &>/dev/null; then \
+		echo "$(CYAN)Restarting Argo Rollout fastapi-serving...$(RESET)"; \
+		kubectl -n $(K8S_NAMESPACE) patch rollout fastapi-serving --type=merge \
+			-p "{\"spec\":{\"template\":{\"metadata\":{\"annotations\":{\"ml-system/restart-stamp\":\"$$(date +%s)\"}}}}}"; \
+	else \
+		kubectl rollout restart deployment/fastapi-serving -n $(K8S_NAMESPACE); \
+	fi
+	kubectl rollout restart deployment/mlflow deployment/grafana deployment/alloy deployment/prometheus deployment/alertmanager -n $(K8S_NAMESPACE)
 	@kubectl get deployment ml-exporter -n $(K8S_NAMESPACE) &>/dev/null && \
 		kubectl rollout restart deployment/ml-exporter -n $(K8S_NAMESPACE) || true
 	@if [ "$(WAIT)" = "1" ]; then \
 		echo "$(CYAN)WAIT=1 set: waiting for rollout completion...$(RESET)"; \
-		kubectl rollout status deployment/fastapi-serving -n $(K8S_NAMESPACE) --timeout=$${TIMEOUT:-120s}; \
+		if kubectl get rollout fastapi-serving -n $(K8S_NAMESPACE) &>/dev/null; then \
+			echo "  waiting for Argo Rollout fastapi-serving..."; \
+			while true; do \
+				PHASE=$$(kubectl -n $(K8S_NAMESPACE) get rollout fastapi-serving \
+					-o jsonpath='{.status.phase}' 2>/dev/null || echo "unknown"); \
+				if [ "$$PHASE" = "Healthy" ]; then break; fi; \
+				sleep 5; \
+			done; \
+		else \
+			kubectl rollout status deployment/fastapi-serving -n $(K8S_NAMESPACE) --timeout=$${TIMEOUT:-120s}; \
+		fi; \
 		kubectl rollout status deployment/mlflow -n $(K8S_NAMESPACE) --timeout=$${TIMEOUT:-120s}; \
 		kubectl rollout status deployment/grafana -n $(K8S_NAMESPACE) --timeout=$${TIMEOUT:-120s}; \
 		kubectl rollout status deployment/alloy -n $(K8S_NAMESPACE) --timeout=$${TIMEOUT:-120s}; \
@@ -462,8 +493,21 @@ k3d.train: ## Build training image, run training job in k3d, stream logs, clean 
 	@echo "$(GREEN)Training complete. MLflow: http://localhost:5000$(RESET)"
 
 k3d.serve.restart: ## Restart serving pod to immediately load the latest model from MLflow
-	kubectl rollout restart deployment/fastapi-serving -n $(K8S_NAMESPACE)
-	kubectl rollout status deployment/fastapi-serving -n $(K8S_NAMESPACE) --timeout=120s
+	@if kubectl get rollout fastapi-serving -n $(K8S_NAMESPACE) &>/dev/null; then \
+		echo "$(CYAN)Restarting Argo Rollout fastapi-serving...$(RESET)"; \
+		kubectl -n $(K8S_NAMESPACE) patch rollout fastapi-serving --type=merge \
+			-p "{\"spec\":{\"template\":{\"metadata\":{\"annotations\":{\"ml-system/restart-stamp\":\"$$(date +%s)\"}}}}}"; \
+		echo "Waiting for rollout to become healthy..."; \
+		while true; do \
+			PHASE=$$(kubectl -n $(K8S_NAMESPACE) get rollout fastapi-serving \
+				-o jsonpath='{.status.phase}' 2>/dev/null || echo "unknown"); \
+			if [ "$$PHASE" = "Healthy" ]; then break; fi; \
+			sleep 5; \
+		done; \
+	else \
+		kubectl rollout restart deployment/fastapi-serving -n $(K8S_NAMESPACE); \
+		kubectl rollout status deployment/fastapi-serving -n $(K8S_NAMESPACE) --timeout=120s; \
+	fi
 
 k3d.annotate: ## Build annotation image, run annotation job in k3d, stream logs, clean up
 	@echo "$(CYAN)Building annotation image...$(RESET)"

@@ -197,22 +197,24 @@ class MLflowModelArtifactController:
                 f"Failed to register model '{model_name}' from run '{run_id}': {exc}"
             ) from exc
 
-    def promote_model(self, model_name: str, version: str) -> None:
-        """Set the ``Production`` alias on *version* of *model_name*.
+    def promote_model(
+        self, model_name: str, version: str, alias: str = "Production"
+    ) -> None:
+        """Set *alias* on *version* of *model_name*.
 
         Uses the MLflow aliases API (introduced in 2.9.0) instead of the
-        deprecated stages API. Only one version can hold the ``Production``
-        alias at a time — MLflow moves it automatically.
+        deprecated stages API. Only one version can hold a given alias at a
+        time — MLflow moves it automatically.
         """
         try:
             self._client.set_registered_model_alias(
                 name=model_name,
-                alias="Production",
+                alias=alias,
                 version=version,
             )
         except Exception as exc:
             raise ModelArtifactError(
-                f"Failed to promote '{model_name}' v{version} to Production: {exc}"
+                f"Failed to set alias '{alias}' on '{model_name}' v{version}: {exc}"
             ) from exc
 
     def get_production_run_id(self, model_name: str, stage: str) -> str:

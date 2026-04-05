@@ -72,8 +72,8 @@ prometheus:
     size: 5Gi
   service:
     type: ClusterIP
-  scrapeIntervalSeconds: 15
-  evaluationIntervalSeconds: 15
+  scrapeIntervalSeconds: 5
+  evaluationIntervalSeconds: 5
 
 alertmanager:
   enabled: true
@@ -95,7 +95,7 @@ grafana:
 alloy:
   enabled: true
   image: grafana/alloy:latest
-  scrapeIntervalSeconds: 15
+  scrapeIntervalSeconds: 5
   httpListenAddr: "0.0.0.0:12345"
 
 loki:
@@ -155,6 +155,28 @@ mlExporter:
     limits: { memory: "512Mi", cpu: "250m" }
   service:
     type: ClusterIP
+
+canary:
+  enabled: false
+  # Canary rollout steps: list of traffic weights (%).
+  # After each step an AnalysisRun validates PSI before progressing.
+  steps:
+    - weight: 20
+    - weight: 40
+  # AnalysisTemplate parameters
+  analysis:
+    # How often the analysis query is evaluated.
+    interval: "30s"
+    # Number of consecutive failures before the rollout is aborted.
+    failureLimit: 3
+    # Initial delay before the first analysis measurement, gives time
+    # for the canary to accumulate enough predictions for a meaningful PSI.
+    initialDelay: "60s"
+    # PSI factor: canary passes if psi_canary < psi_production * factor.
+    # 0.8 = canary must show at least 20% less drift than production.
+    psiFactor: "0.8"
+    # Minimum predictions in the canary window before analysis is valid.
+    minSamples: "50"
 
 ingress:
   enabled: false

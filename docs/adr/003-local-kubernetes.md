@@ -1,8 +1,8 @@
 # ADR-003: Local Kubernetes (k3d) Instead of Docker Compose or Virtual Machines
 
-**Date**: 2024-03-29  
+**Date**: March 2026
 **Status**: Accepted  
-**Deciders**: ML Platform Team
+**Deciders**: kmikol
 
 ## Context
 

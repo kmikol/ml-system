@@ -1,8 +1,8 @@
 # ADR-004: MLflow Model Registry with PostgreSQL + MinIO Backend
 
-**Date**: 2024-03-29  
+**Date**: March 2026
 **Status**: Accepted  
-**Deciders**: ML Platform Team
+**Deciders**: kmikol
 
 ## Context
 

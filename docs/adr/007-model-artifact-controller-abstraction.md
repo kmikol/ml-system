@@ -1,8 +1,8 @@
 # ADR-007: Model Artifact Controller Boundary
 
-**Date**: 2026-03-30  
+**Date**: March 2026
 **Status**: Proposed  
-**Deciders**: ML Platform Team
+**Deciders**: kmikol
 
 ## Purpose
 

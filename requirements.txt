@@ -1,0 +1,7 @@
+# Unified local dependencies entrypoint.
+# This file is used to install the dependencies for functionality running outside
+# of the kubernetes cluster, such as tests and documentation.
+# Add new requirement files below as the project grows.
+
+-r tests/requirements.txt
+-r docs/docs-requirements.txt

@@ -53,73 +53,6 @@ help: ## Show this help
 
 # ═══════════════════════════════════════════════════════════════
 # KUBERNETES (k3d)
-#
-# Architecture on macOS:
-#
-#   Your Mac (host)
-#     └── Docker Desktop
-#           ├── k3d-ml-system-server-0    ← Docker container running k3s
-#           │     └── containerd          ← k3s's own container runtime
-#           │           ├── serving pod
-#           │           ├── mlflow pod
-#           │           ├── postgres pod
-#           │           ├── minio pod
-#           │           ├── prometheus pod
-#           │           ├── grafana pod
-#           │           └── alloy pod
-#           └── k3d-ml-system-serverlb    ← nginx proxy for port mapping
-#
-# Key concepts:
-#
-# - k3s is a lightweight Kubernetes distro (single binary, ~70MB RAM).
-#   It can't run natively on macOS — it needs Linux.
-#
-# - k3d wraps k3s inside Docker containers. Each "k3s node" is a
-#   Docker container. Inside that container, k3s runs its own
-#   container runtime (containerd) which runs your pods.
-#   So it's: Docker → k3s container → containerd → your pod.
-#
-# - Because k3s's containerd is SEPARATE from Docker Desktop's daemon,
-#   your locally built Docker images are invisible to k3s.
-#   You must explicitly import them with `k3d image import`.
-#   This is the #1 gotcha. Every time you rebuild, re-import.
-#   (Public images like postgres/grafana are pulled normally — no import needed.)
-#
-# - Port mapping: k3d creates an nginx load balancer container that
-#   forwards host ports to k3s NodePorts. The mapping is set at
-#   cluster creation time and cannot be changed later.
-#   To add ports, delete and recreate the cluster.
-#
-# - kubectl context: k3d automatically creates a kubectl context
-#   named `k3d-{cluster-name}` and sets it as current.
-#
-# Port map (host → NodePort → service):
-#   localhost:80    →  30080  →  ingress-nginx (HTTP)
-#   localhost:443   →  30443  →  ingress-nginx (HTTPS)
-#   localhost:5432  →  30005  →  postgres
-#   localhost:2746  →  30007  →  argo-workflows UI
-#
-# First-time setup (one command):
-#   make k3d.bootstrap     ← create cluster, install KEDA, build + import images,
-#                            deploy, seed dataset, train model, restart serving
-#
-# Workflow (step-by-step equivalent):
-#   1. make k3d.create          ← one-time cluster setup
-#   2. make k3d.keda.install    ← install KEDA (one-time)
-#   3. make k3d.build           ← build custom images with docker build
-#   4. make k3d.import          ← push custom images into k3s's containerd
-#   5. make k3d.deploy          ← helm install/upgrade
-#   6. make data.setup          ← prepare + seed + verify dataset
-#   7. make k3d.train           ← train and register model
-#   8. make k3d.serve.restart   ← reload serving with trained model
-#   9. make k3d.status          ← verify pods are running
-#  10. make serve.test          ← smoke test
-#
-# When you change code:
-#   make k3d.build && make k3d.import && make k3d.deploy
-# Or simply:
-#   make k3d.redeploy
-#
 # ═══════════════════════════════════════════════════════════════
 
 .PHONY: k3d.bootstrap k3d.bootstrap.workflow k3d.create k3d.delete.data k3d.delete.all k3d.build k3d.import k3d.deploy k3d.wait.downstreams k3d.status k3d.logs k3d.shell k3d.redeploy k3d.train k3d.annotate k3d.serve.restart k3d.keda.install k3d.ml-exporter.restart k3d.argo.install k3d.argo-rollouts.install k3d.ingress.install
@@ -673,7 +606,7 @@ test.model_artifact_controller.integration: ## Run model_artifact_controller int
 	exit $$EXIT
 
 
-serve.test: ## Smoke test against running serving (works with compose or k3d)
+test.serve: ## Smoke test against running serving (works with compose or k3d)
 	@echo "$(CYAN)Health:$(RESET)"
 	@SERVE_BASE=$${SERVE_BASE:-$$(if curl -fsS http://localhost/serving/health >/dev/null 2>&1; then echo http://localhost/serving; else echo http://localhost:8000; fi)}; \
 	curl -s $${SERVE_BASE}/health | python3 -m json.tool
@@ -685,23 +618,13 @@ serve.test: ## Smoke test against running serving (works with compose or k3d)
 		-d @- \
 		| python3 -m json.tool
 
-serve.test.load: ## Send requests with ramp-up/down (RATE=5 DURATION=60 RAMP_UP=0 RAMP_DOWN=0)
-	@SERVE_BASE=$${SERVE_BASE:-$$(if curl -fsS http://localhost/serving/health >/dev/null 2>&1; then echo http://localhost/serving; else echo http://localhost:8000; fi)}; \
-	python3 scripts/load_test.py --url $${SERVE_BASE}/predict \
-		--rate $${RATE:-5} --duration $${DURATION:-60} \
+test.serve.load: ## Send requests with ramp-up/down (RATE=5 DURATION=60 RAMP_UP=0 RAMP_DOWN=0)
+	python3 scripts/load_test.py --rate $${RATE:-5} --duration $${DURATION:-60} \
 		--ramp-up $${RAMP_UP:-0} --ramp-down $${RAMP_DOWN:-0}
 
-serve.test.drift: ## Send inverted images with ramping probability (RATE=5 DURATION=120 INVERSION_PROB=1.0 RAMP=60)
-	@SERVE_BASE=$${SERVE_BASE:-$$(if curl -fsS http://localhost/serving/health >/dev/null 2>&1; then echo http://localhost/serving; else echo http://localhost:8000; fi)}; \
-	python3 scripts/drift_test.py --url $${SERVE_BASE}/predict \
-		--rate $${RATE:-5} --duration $${DURATION:-120} \
+test.serve.drift: ## Send inverted images with ramping probability (RATE=5 DURATION=120 INVERSION_PROB=1.0 RAMP=60)
+	python3 scripts/drift_test.py --rate $${RATE:-5} --duration $${DURATION:-120} \
 		--inversion-probability $${INVERSION_PROB:-1.0} --ramp $${RAMP:-60}
-
-mlflow.ui: ## Open MLflow UI
-	@open http://localhost:5000 2>/dev/null || echo "http://localhost:5000"
-
-minio.ui: ## Open MinIO console
-	@open http://localhost:9001 2>/dev/null || echo "http://localhost:9001"
 
 clean.pyc: ## Remove Python cache
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
@@ -718,30 +641,3 @@ docs.serve.local: ## Serve docs locally with live reload (http://localhost:8001)
 docs.serve.online: ## Build and deploy docs to GitHub Pages (gh-pages branch)
 	mkdocs gh-deploy -f docs/mkdocs.yml --force
 
-# ═══════════════════════════════════════════════════════════════
-# KUBERNETES DEBUGGING
-#
-# Pod stuck in ImagePullBackOff:
-#   → Forgot to import the image: make k3d.import
-#   → Or imagePullPolicy is not "Never" in values-local.yaml
-#   → Check: kubectl describe pod <name> -n ml-system
-#
-# Pod stuck in CrashLoopBackOff:
-#   → Container starts and immediately crashes.
-#   → Check logs: kubectl logs <pod-name> -n ml-system
-#   → Usually a missing env var or failed initContainer
-#
-# Pod is Running but service unreachable:
-#   → kubectl get svc -n ml-system
-#   → kubectl get endpoints -n ml-system
-#   → If endpoints show <none>, selector doesn't match pod labels.
-#
-# Port not reachable from host:
-#   → docker ps | grep k3d  (verify port mapping)
-#   → Port mapping is set at cluster creation — immutable.
-#   → To add ports: make k3d.delete.all && make k3d.create && make k3d.redeploy
-#
-# Start fresh:
-#   make k3d.delete.all && make k3d.create && make k3d.redeploy
-#
-# ═══════════════════════════════════════════════════════════════

@@ -1,8 +1,8 @@
 # ADR-001: Event-Driven Retraining Instead of Scheduled Cron Jobs
 
-**Date**: 2024-03-29  
+**Date**: March 2026
 **Status**: Accepted  
-**Deciders**: ML Platform Team
+**Deciders**: kmikol
 
 ## Context
 

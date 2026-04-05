@@ -1,6 +1,6 @@
 site_name: MLOps System
 site_description: End-to-end MLOps platform for MNIST classification — training, serving, drift detection, and active learning.
-repo_url: https://github.com/kmikol/ml-system  # update to match your repo URL
+repo_url: https://github.com/kmikol/ml-system
 repo_name: kmikol/ml-system
 site_url: https://kmikol.github.io/ml-system/
 
@@ -49,13 +49,13 @@ validation:
     omitted_files: ignore
 
 nav:
+  - Overview:
+    - Home: index.md
+    - Architecture: architecture.md
   - Getting Started:
     - Setup: getting-started/setup.md
     - Running: getting-started/running.md
     - Useful Commands: getting-started/useful-commands.md
-  - Overview:
-    - Home: index.md
-    - Architecture: architecture.md
   - ADRs:
     - ADR Index: adr/index.md
     - 001 Event-Driven Retraining: adr/001-event-driven-retraining.md

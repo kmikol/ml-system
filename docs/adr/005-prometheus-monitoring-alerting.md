@@ -1,8 +1,8 @@
 # ADR-005: Prometheus + AlertManager + Argo Events for Multi-Alert Orchestration
 
-**Date**: 2024-03-29  
+**Date**: March 2026
 **Status**: Accepted  
-**Deciders**: ML Platform Team
+**Deciders**: kmikol
 
 ## Context
 

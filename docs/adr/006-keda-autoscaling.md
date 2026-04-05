@@ -1,8 +1,8 @@
 # ADR-006: KEDA-Based Autoscaling Using Request Arrival Rate Instead of CPU
 
-**Date**: 2024-03-29  
+**Date**: March 2026
 **Status**: Accepted  
-**Deciders**: ML Platform Team
+**Deciders**: kmikol
 
 ## Context
 

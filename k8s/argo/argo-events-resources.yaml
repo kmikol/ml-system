@@ -147,6 +147,12 @@ spec:
     - template:
         name: trigger-retrain
         conditions: "psi-alert-dep && annotation-ready-dep"
+        conditionsReset:
+          - byTime:
+              # Allow the sensor to re-fire at most once every 30 minutes.
+              # Between resets the consumed dependencies block re-triggering.
+              cron: "*/30 * * * *"
+              timezone: "UTC"
         k8s:
           operation: create
           source:

@@ -74,6 +74,9 @@ metadata:
 spec:
   serviceAccountName: retrain-workflow
   entrypoint: retrain
+  synchronization:
+    mutexes:
+      - name: retrain-lock
 
   templates:
 

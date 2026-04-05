@@ -27,13 +27,13 @@ data:
       - name: ml_serving
         rules:
           - alert: PsiThresholdBreached
-            expr: drift_psi_class_distribution > 0.25
+            expr: min(drift_psi_class_distribution) > 0.25
             for: 30s
             labels:
               severity: warning
             annotations:
               summary: "PSI class distribution exceeds 0.25 — drift detected"
-              description: "drift_psi_class_distribution={{ "{{" }} $value {{ "}}" }}"
+              description: "min(drift_psi_class_distribution)={{ "{{" }} $value {{ "}}" }}"
           - alert: AnnotationCountReached
             expr: annotation_annotated_count >= 50
             for: 0m

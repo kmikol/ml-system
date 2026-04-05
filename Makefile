@@ -123,6 +123,9 @@ help: ## Show this help
 # ═══════════════════════════════════════════════════════════════
 
 .PHONY: k3d.bootstrap k3d.bootstrap.workflow k3d.create k3d.delete.data k3d.delete.all k3d.build k3d.import k3d.deploy k3d.wait.downstreams k3d.status k3d.logs k3d.shell k3d.redeploy k3d.train k3d.annotate k3d.serve.restart k3d.keda.install k3d.ml-exporter.restart k3d.argo.install k3d.argo-rollouts.install k3d.ingress.install
+.PHONY: bootstrap k3d.bootstrap k3d.bootstrap.workflow k3d.create k3d.delete k3d.build k3d.import k3d.deploy k3d.status k3d.logs k3d.shell k3d.redeploy k3d.train k3d.annotate k3d.serve.restart k3d.keda.install k3d.ml-exporter.restart k3d.argo.install
+
+bootstrap: k3d.bootstrap ## Convenience alias for full first-time cluster startup
 
 k3d.keda.install: ## Install KEDA into the cluster (run once after k3d.create)
 	@echo "$(CYAN)Installing KEDA...$(RESET)"
@@ -597,7 +600,7 @@ data.inspect.training: ## Plot 4x4 grid of random training images with labels
 .PHONY: test test.unit test.integration test.helm test.e2e \
         test.data_controller.unit test.data_controller.integration \
         test.model_artifact_controller.unit test.model_artifact_controller.integration \
-        lint lint.fix format serve.test serve.test.load serve.test.drift mlflow.ui minio.ui clean.pyc
+	lint lint.fix format serve.test serve.test.load serve.test.drift test.serve test.serve.load test.serve.drift mlflow.ui minio.ui clean.pyc
 
 typecheck: ## Run mypy static type checker
 	python -m mypy serving annotation sampling monitoring/ml_exporter shared \
@@ -693,6 +696,12 @@ serve.test.drift: ## Send inverted images with ramping probability (RATE=5 DURAT
 	python3 scripts/drift_test.py --url $${SERVE_BASE}/predict \
 		--rate $${RATE:-5} --duration $${DURATION:-120} \
 		--inversion-probability $${INVERSION_PROB:-1.0} --ramp $${RAMP:-60}
+
+mlflow.ui: ## Open MLflow UI
+	@open http://localhost:5000 2>/dev/null || echo "http://localhost:5000"
+
+minio.ui: ## Open MinIO console
+	@open http://localhost:9001 2>/dev/null || echo "http://localhost:9001"
 
 clean.pyc: ## Remove Python cache
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true

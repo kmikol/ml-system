@@ -35,10 +35,12 @@ In the background, three services close the retraining loop:
 
 | Facade | Hides | Used by |
 |--------|-------|---------|
-| [Data Controller](api/data_controller.md) | Postgres + MinIO S3 | Serving, Training, Sampling, Annotation, Drift, Retrain |
-| [Model Artifact Controller](api/model_artifact_controller.md) | MLflow | Training, Serving |
+| [Data Controller](modules/data_controller.md) | Postgres + MinIO S3 | Serving, Training, Sampling, Annotation, Drift, Retrain |
+| [Model Artifact Controller](modules/model_artifact_controller.md) | MLflow | Training, Serving |
 
 ## Quick start
+
+For the full setup and test flow, see [Getting Started](getting-started/setup.md).
 
 ```bash
 # One-time cluster setup

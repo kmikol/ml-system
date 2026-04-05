@@ -1,0 +1,1 @@
+--8<-- "sampling/docs/index.md"

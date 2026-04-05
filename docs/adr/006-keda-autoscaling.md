@@ -122,7 +122,7 @@ Scale based on how many requests are queued in the semaphore rather than arrival
 
 ## Implementation Details
 
-**Metric Export in Serving** ([serving/main.py](serving/main.py)):
+**Metric Export in Serving** ([serving/main.py](https://github.com/kmikol/ml-system/blob/main/serving/main.py)):
 
 ```python
 from prometheus_client import Counter
@@ -143,7 +143,7 @@ async def predict(request: PredictRequest):
         # ... inference logic ...
 ```
 
-**KEDA ScaledObject** ([helm/ml-system/templates/scaledobject.yaml](helm/ml-system/templates/scaledobject.yaml)):
+**KEDA ScaledObject** ([helm/ml-system/templates/scaledobject.yaml](https://github.com/kmikol/ml-system/blob/main/helm/ml-system/templates/scaledobject.yaml)):
 
 ```yaml
 apiVersion: keda.sh/v1alpha1
@@ -182,7 +182,7 @@ spec:
           periodSeconds: 15
 ```
 
-**Autoscaling Configuration** ([helm/ml-system/values.yaml](helm/ml-system/values.yaml)):
+**Autoscaling Configuration** ([helm/ml-system/values.yaml](https://github.com/kmikol/ml-system/blob/main/helm/ml-system/values.yaml)):
 
 ```yaml
 autoscaling:

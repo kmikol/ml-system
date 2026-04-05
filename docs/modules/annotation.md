@@ -1,0 +1,1 @@
+--8<-- "annotation/docs/index.md"

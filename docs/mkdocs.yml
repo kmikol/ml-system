@@ -37,12 +37,39 @@ plugins:
             show_root_heading: true
             heading_level: 2
 
+markdown_extensions:
+  - pymdownx.snippets:
+      base_path:
+        - .
+        - ..
+      check_paths: true
+
+validation:
+  nav:
+    omitted_files: ignore
+
 nav:
-  - Home: index.md
-  - Architecture: architecture.md
-  - Guides:
-    - PSI Alert → Argo Workflow: alert-to-workflow.md
-  - API Reference:
-    - Data Controller: api/data_controller.md
-    - Model Artifact Controller: api/model_artifact_controller.md
-  - Roadmap: roadmap.md
+  - Getting Started:
+    - Setup: getting-started/setup.md
+    - Running: getting-started/running.md
+    - Useful Commands: getting-started/useful-commands.md
+  - Overview:
+    - Home: index.md
+    - Architecture: architecture.md
+  - ADRs:
+    - ADR Index: adr/index.md
+    - 001 Event-Driven Retraining: adr/001-event-driven-retraining.md
+    - 002 Canary Rollouts: adr/002-canary-rollouts.md
+    - 003 Local Kubernetes: adr/003-local-kubernetes.md
+    - 004 MLflow Artifact Storage: adr/004-mlflow-artifact-storage.md
+    - 005 Prometheus Monitoring & Alerting: adr/005-prometheus-monitoring-alerting.md
+    - 006 KEDA Autoscaling: adr/006-keda-autoscaling.md
+    - 007 Model Artifact Controller Abstraction: adr/007-model-artifact-controller-abstraction.md
+  - Modules:
+    - Modules Index: modules/index.md
+    - Annotation: modules/annotation.md
+    - Data Controller: modules/data_controller.md
+    - Model Artifact Controller: modules/model_artifact_controller.md
+    - Sampling: modules/sampling.md
+    - Serving: modules/serving.md
+    - Training: modules/training.md

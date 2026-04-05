@@ -34,10 +34,10 @@ In short: keep service code business-focused, and keep storage/registry mechanic
 
 Current implementation already has the right structural shape:
 
-1. Facade in [shared/model_artifact_controller/__init__.py](shared/model_artifact_controller/__init__.py)
-2. Protocol contract in [shared/model_artifact_controller/_protocol.py](shared/model_artifact_controller/_protocol.py)
-3. MLflow backend in [shared/model_artifact_controller/mlflow.py](shared/model_artifact_controller/mlflow.py)
-4. Unit and integration tests in [shared/model_artifact_controller/tests/unit/test_mlflow_controller.py](shared/model_artifact_controller/tests/unit/test_mlflow_controller.py) and [shared/model_artifact_controller/tests/integration/test_mlflow.py](shared/model_artifact_controller/tests/integration/test_mlflow.py)
+1. Facade in [shared/model_artifact_controller/__init__.py](https://github.com/kmikol/ml-system/blob/main/shared/model_artifact_controller/__init__.py)
+2. Protocol contract in [shared/model_artifact_controller/_protocol.py](https://github.com/kmikol/ml-system/blob/main/shared/model_artifact_controller/_protocol.py)
+3. MLflow backend in [shared/model_artifact_controller/mlflow.py](https://github.com/kmikol/ml-system/blob/main/shared/model_artifact_controller/mlflow.py)
+4. Unit and integration tests in [shared/model_artifact_controller/tests/unit/test_mlflow_controller.py](https://github.com/kmikol/ml-system/blob/main/shared/model_artifact_controller/tests/unit/test_mlflow_controller.py) and [shared/model_artifact_controller/tests/integration/test_mlflow.py](https://github.com/kmikol/ml-system/blob/main/shared/model_artifact_controller/tests/integration/test_mlflow.py)
 
 Current behavior that is correct and useful:
 
@@ -60,8 +60,8 @@ The architecture idea is mostly right, but implementation discipline is incomple
 
 ### Gap 1: Boundary is bypassed in scripts
 
-- [scripts/set_alias.py](scripts/set_alias.py) accesses controller internals and calls backend client directly.
-- [scripts/evaluate_and_promote.py](scripts/evaluate_and_promote.py) mixes controller calls with direct MLflow client usage.
+- [scripts/set_alias.py](https://github.com/kmikol/ml-system/blob/main/scripts/set_alias.py) accesses controller internals and calls backend client directly.
+- [scripts/evaluate_and_promote.py](https://github.com/kmikol/ml-system/blob/main/scripts/evaluate_and_promote.py) mixes controller calls with direct MLflow client usage.
 
 Impact:
 

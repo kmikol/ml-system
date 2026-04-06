@@ -19,7 +19,7 @@ spec:
       initContainers:
         # Block until postgres accepts connections.
         - name: wait-for-postgres
-          image: postgres:15
+          image: {{ .Values.postgres.image }}
           imagePullPolicy: IfNotPresent
           command:
             - sh

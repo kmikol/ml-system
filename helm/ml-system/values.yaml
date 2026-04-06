@@ -79,6 +79,13 @@ alertmanager:
   enabled: true
   image: prom/alertmanager:v0.26.0
   port: 9093
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
 
 grafana:
   enabled: true
@@ -97,6 +104,14 @@ alloy:
   image: grafana/alloy:latest
   scrapeIntervalSeconds: 5
   httpListenAddr: "0.0.0.0:12345"
+  argoWorkflowsMetricsPort: 9090
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
 
 loki:
   enabled: true

@@ -98,7 +98,7 @@ data:
     // Argo Workflows controller metrics — exposes argo_workflows_count and related gauges.
     // Static address: no k8s discovery needed, no additional RBAC required.
     prometheus.scrape "argo_workflows" {
-      targets         = [{"__address__" = "argo-workflows-workflow-controller-metrics.argo.svc.cluster.local:9090"}]
+      targets         = [{"__address__" = "argo-workflows-workflow-controller-metrics.argo.svc.cluster.local:{{ .Values.alloy.argoWorkflowsMetricsPort }}"}]
       scrape_interval = "{{ .Values.alloy.scrapeIntervalSeconds }}s"
       scrape_timeout  = "{{ .Values.alloy.scrapeIntervalSeconds }}s"
       forward_to      = [prometheus.remote_write.local.receiver]
@@ -181,6 +181,7 @@ spec:
             - "/etc/alloy/config.alloy"
           ports:
             - containerPort: 12345
+          resources: {{ toYaml .Values.alloy.resources | nindent 12 }}
           readinessProbe:
             tcpSocket:
               port: 12345

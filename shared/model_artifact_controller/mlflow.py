@@ -197,9 +197,7 @@ class MLflowModelArtifactController:
                 f"Failed to register model '{model_name}' from run '{run_id}': {exc}"
             ) from exc
 
-    def promote_model(
-        self, model_name: str, version: str, alias: str = "Production"
-    ) -> None:
+    def promote_model(self, model_name: str, version: str, alias: str = "Production") -> None:
         """Set *alias* on *version* of *model_name*.
 
         Uses the MLflow aliases API (introduced in 2.9.0) instead of the

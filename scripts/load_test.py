@@ -26,8 +26,8 @@ import random
 import sys
 import threading
 import time
-import urllib.parse
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections import defaultdict
 

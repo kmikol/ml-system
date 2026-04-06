@@ -42,7 +42,6 @@ from shared.model_artifact_controller import (  # noqa: E402
     ModelArtifactError,
     ModelStage,
     ModelStore,
-    ModelVersion,
 )
 
 setup_logging("evaluate-and-promote")

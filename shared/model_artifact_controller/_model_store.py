@@ -247,9 +247,7 @@ class ModelStore:
             return None
         return ModelVersion(version=version, _model_name=self._model_name, _run_id=run_id)
 
-    def promote(
-        self, version: ModelVersion, stage: ModelStage = ModelStage.PRODUCTION
-    ) -> None:
+    def promote(self, version: ModelVersion, stage: ModelStage = ModelStage.PRODUCTION) -> None:
         """Promote a model version to the given stage alias.
 
         Args:
@@ -259,9 +257,7 @@ class ModelStore:
         Raises:
             ModelArtifactError: If promotion fails.
         """
-        self._backend.promote_model(
-            version._model_name, version.version, alias=stage.value
-        )
+        self._backend.promote_model(version._model_name, version.version, alias=stage.value)
 
     def log_metric(self, run_id: str, key: str, value: float) -> None:
         """Log a single metric to a run (for evaluation baselines).

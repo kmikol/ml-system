@@ -47,8 +47,8 @@ class ModelArtifactController(Protocol):
         """Register artifacts from *run_id* under *model_name* and return the version string."""
         ...
 
-    def promote_model(self, model_name: str, version: str) -> None:
-        """Mark *version* of *model_name* as the production model."""
+    def promote_model(self, model_name: str, version: str, alias: str = "Production") -> None:
+        """Mark *version* of *model_name* with the given alias."""
         ...
 
     def get_production_run_id(self, model_name: str, stage: str) -> str:

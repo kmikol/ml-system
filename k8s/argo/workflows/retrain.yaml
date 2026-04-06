@@ -86,8 +86,6 @@ spec:
     # ── Entrypoint: sequential steps ─────────────────────────────────────────
     - name: retrain
       steps:
-        - - name: cooldown-gate
-            template: cooldown-gate
         - - name: integrate-annotations
             template: integrate-annotations
         - - name: train
@@ -124,40 +122,6 @@ spec:
                   value: "{{steps.evaluate-and-promote.outputs.parameters.model-version}}"
             when: "'{{steps.evaluate-and-promote.outputs.parameters.model-version}}' != '' && '{{steps.wait-for-rollout.outputs.parameters.rollout-status}}' == 'healthy'"
 
-    # ── Step 0: cooldown-gate ──────────────────────────────────────────────
-    # Skip this run if a retrain workflow completed within the last N minutes.
-    # This prevents back-to-back retrains when alerts keep re-firing after
-    # a successful rollout.
-    - name: cooldown-gate
-      container:
-        image: bitnami/kubectl:latest
-        command: [sh, -c]
-        args:
-          - |
-            COOLDOWN_MINUTES=${RETRAIN_COOLDOWN_MINUTES:-30}
-            echo "Checking for retrain workflows completed in the last ${COOLDOWN_MINUTES}m..."
-            CUTOFF=$(date -u -d "-${COOLDOWN_MINUTES} minutes" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
-                  || date -u -v-${COOLDOWN_MINUTES}M +%Y-%m-%dT%H:%M:%SZ)
-            # Find succeeded retrain workflows (exclude ourselves)
-            RECENT=$(kubectl get workflows -n argo \
-              -l workflows.argoproj.io/workflow-template=retrain \
-              --field-selector status.phase=Succeeded \
-              -o jsonpath='{range .items[*]}{.status.finishedAt}{"\n"}{end}' \
-              | sort -r | head -1)
-            if [ -z "$RECENT" ]; then
-              echo "No previous retrain found. Proceeding."
-              exit 0
-            fi
-            echo "Last retrain finished: $RECENT, cutoff: $CUTOFF"
-            if [ "$RECENT" \> "$CUTOFF" ]; then
-              echo "Last retrain was less than ${COOLDOWN_MINUTES}m ago. Aborting."
-              exit 1
-            fi
-            echo "Cooldown elapsed. Proceeding."
-        env:
-          - name: RETRAIN_COOLDOWN_MINUTES
-            value: "30"
-
     # ── Step 1: integrate-annotations ────────────────────────────────────────
     - name: integrate-annotations
       outputs:
@@ -182,16 +146,27 @@ spec:
         workingDir: /app
         command: [python, scripts/integrate_annotations.py]
         env:
+          - name: POSTGRES_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: ml-system-secrets
+                key: postgres-password
           - name: DATA_CONTROLLER_DB_URL
-            value: "postgresql://mlflow:mlflow@postgres.ml-system.svc.cluster.local:5432/mlflow"
+            value: "postgresql://mlflow:$(POSTGRES_PASSWORD)@postgres.ml-system.svc.cluster.local:5432/mlflow"
           - name: DATASET_S3_ENDPOINT_URL
             value: "http://minio.ml-system.svc.cluster.local:9000"
           - name: DATASET_BUCKET
             value: "mnist-dataset"
           - name: AWS_ACCESS_KEY_ID
-            value: "minioadmin"
+            valueFrom:
+              secretKeyRef:
+                name: ml-system-secrets
+                key: minio-access-key
           - name: AWS_SECRET_ACCESS_KEY
-            value: "minioadmin"
+            valueFrom:
+              secretKeyRef:
+                name: ml-system-secrets
+                key: minio-secret-key
           - name: LAKEFS_ENDPOINT_URL
             value: "http://lakefs.ml-system.svc.cluster.local:8000"
           - name: LAKEFS_ACCESS_KEY_ID
@@ -236,16 +211,27 @@ spec:
         workingDir: /app
         command: [python, -m, training.main]
         env:
+          - name: POSTGRES_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: ml-system-secrets
+                key: postgres-password
           - name: MLFLOW_TRACKING_URI
             value: "http://mlflow.ml-system.svc.cluster.local:5000"
           - name: MLFLOW_S3_ENDPOINT_URL
             value: "http://minio.ml-system.svc.cluster.local:9000"
           - name: AWS_ACCESS_KEY_ID
-            value: "minioadmin"
+            valueFrom:
+              secretKeyRef:
+                name: ml-system-secrets
+                key: minio-access-key
           - name: AWS_SECRET_ACCESS_KEY
-            value: "minioadmin"
+            valueFrom:
+              secretKeyRef:
+                name: ml-system-secrets
+                key: minio-secret-key
           - name: DATA_CONTROLLER_DB_URL
-            value: "postgresql://mlflow:mlflow@postgres.ml-system.svc.cluster.local:5432/mlflow"
+            value: "postgresql://mlflow:$(POSTGRES_PASSWORD)@postgres.ml-system.svc.cluster.local:5432/mlflow"
           - name: DATASET_S3_ENDPOINT_URL
             value: "http://minio.ml-system.svc.cluster.local:9000"
           - name: DATASET_BUCKET
@@ -303,16 +289,27 @@ spec:
         workingDir: /app
         command: [python, scripts/evaluate_and_promote.py]
         env:
+          - name: POSTGRES_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: ml-system-secrets
+                key: postgres-password
           - name: MLFLOW_TRACKING_URI
             value: "http://mlflow.ml-system.svc.cluster.local:5000"
           - name: MLFLOW_S3_ENDPOINT_URL
             value: "http://minio.ml-system.svc.cluster.local:9000"
           - name: AWS_ACCESS_KEY_ID
-            value: "minioadmin"
+            valueFrom:
+              secretKeyRef:
+                name: ml-system-secrets
+                key: minio-access-key
           - name: AWS_SECRET_ACCESS_KEY
-            value: "minioadmin"
+            valueFrom:
+              secretKeyRef:
+                name: ml-system-secrets
+                key: minio-secret-key
           - name: DATA_CONTROLLER_DB_URL
-            value: "postgresql://mlflow:mlflow@postgres.ml-system.svc.cluster.local:5432/mlflow"
+            value: "postgresql://mlflow:$(POSTGRES_PASSWORD)@postgres.ml-system.svc.cluster.local:5432/mlflow"
           - name: DATASET_S3_ENDPOINT_URL
             value: "http://minio.ml-system.svc.cluster.local:9000"
           - name: DATASET_BUCKET
@@ -460,8 +457,14 @@ spec:
           - name: MLFLOW_S3_ENDPOINT_URL
             value: "http://minio.ml-system.svc.cluster.local:9000"
           - name: AWS_ACCESS_KEY_ID
-            value: "minioadmin"
+            valueFrom:
+              secretKeyRef:
+                name: ml-system-secrets
+                key: minio-access-key
           - name: AWS_SECRET_ACCESS_KEY
-            value: "minioadmin"
+            valueFrom:
+              secretKeyRef:
+                name: ml-system-secrets
+                key: minio-secret-key
           - name: MODEL_NAME
             value: "ml_system_model"

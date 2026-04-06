@@ -84,7 +84,7 @@ grafana:
   enabled: true
   image: grafana/grafana:10.3.0
   port: 3000
-  adminPassword: admin
+  adminPassword: ""
   rootUrl: ""
   serveFromSubPath: false
   persistence:
@@ -128,15 +128,16 @@ autoscaling:
   scaleDownPeriodSeconds: 15
 
 # Credentials used by postgres, minio, mlflow, and serving.
-# Override in a values override file or via --set for production deployments.
+# All values must be provided via an override file (e.g. values-local.yaml).
+# Helm will fail at render time if any are missing.
 secrets:
-  minioAccessKey: minioadmin
-  minioSecretKey: minioadmin
-  postgresPassword: mlflow
+  minioAccessKey: ""
+  minioSecretKey: ""
+  postgresPassword: ""
   lakefs:
-    accessKeyId: AKIAIOSFODNN7EXAMPLE
-    secretAccessKey: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
-    encryptSecretKey: "change-me-in-production"
+    accessKeyId: ""
+    secretAccessKey: ""
+    encryptSecretKey: ""
 
 mlExporter:
   enabled: false

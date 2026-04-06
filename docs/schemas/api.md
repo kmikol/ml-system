@@ -8,11 +8,3 @@ Used primarily by:
 - Client-facing API contracts
 
 --8<-- "docs/schemas/generated/api-fields.md"
-
-## Module Reference
-
-::: shared.schemas.api
-		options:
-			show_source: false
-			show_root_full_path: false
-			show_root_toc_entry: false

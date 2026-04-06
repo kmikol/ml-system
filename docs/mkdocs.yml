@@ -36,8 +36,10 @@ plugins:
             show_source: true
             show_root_heading: true
             heading_level: 2
+            docstring_section_style: list
 
 markdown_extensions:
+  - def_list
   - pymdownx.snippets:
       base_path:
         - .
@@ -53,19 +55,22 @@ extra_javascript:
   - https://unpkg.com/mermaid@10/dist/mermaid.min.js
   - javascripts/mermaid-init.js
 
+extra_css:
+  - stylesheets/architecture.css
+
 validation:
   nav:
     omitted_files: ignore
 
 nav:
-  - Overview:
-    - Home: index.md
+  - System Info:
+    - Overview: architecture/index.md
+    - C4 Level 1: architecture/c4-level-1.md
+    - C4 Level 2: architecture/c4-level-2.md
   - Getting Started:
     - Setup: getting-started/setup.md
     - Running: getting-started/running.md
     - Useful Commands: getting-started/useful-commands.md
-  - Architecture:
-    - C4 Level 1: architecture.md
   - Schemas:
     - Schemas Index: schemas/index.md
     - API Schemas: schemas/api.md

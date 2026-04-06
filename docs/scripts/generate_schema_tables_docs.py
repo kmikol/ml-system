@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Generate schema field tables for docs from source files.
+"""Generate schema parameter sections for docs from source files.
 
-Avoids hardcoding schema tables in markdown by extracting model fields and
+Avoids hardcoding schema docs in markdown by extracting model fields and
 field descriptions from Pydantic schema modules.
 """
 
@@ -13,10 +13,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMAS = ROOT / "shared" / "schemas"
 OUT_DIR = ROOT / "docs" / "schemas" / "generated"
-
-
-def _escape(text: str) -> str:
-    return text.replace("|", "\\|")
 
 
 def _unparse(node: ast.AST | None) -> str:
@@ -56,9 +52,9 @@ def _is_basemodel_subclass(node: ast.ClassDef) -> bool:
     return False
 
 
-def _extract_model_tables(path: Path) -> list[tuple[str, list[tuple[str, str, str]]]]:
+def _extract_model_params(path: Path) -> list[tuple[str, list[tuple[str, str, str, str]]]]:
     tree = ast.parse(path.read_text(encoding="utf-8"))
-    result: list[tuple[str, list[tuple[str, str, str]]]] = []
+    result: list[tuple[str, list[tuple[str, str, str, str]]]] = []
 
     for node in tree.body:
         if not isinstance(node, ast.ClassDef):
@@ -66,7 +62,7 @@ def _extract_model_tables(path: Path) -> list[tuple[str, list[tuple[str, str, st
         if not _is_basemodel_subclass(node):
             continue
 
-        rows: list[tuple[str, str, str]] = []
+        rows: list[tuple[str, str, str, str]] = []
         for item in node.body:
             if not isinstance(item, ast.AnnAssign):
                 continue
@@ -76,22 +72,26 @@ def _extract_model_tables(path: Path) -> list[tuple[str, list[tuple[str, str, st
             field_name = item.target.id
             field_type = _unparse(item.annotation)
             description = ""
+            default = ""
 
             if isinstance(item.value, ast.Call) and _unparse(item.value.func).endswith("Field"):
                 description = _field_description_from_call(item.value)
+                default = _field_default_from_call(item.value)
                 if not description:
                     description = "TODO: add field description"
             else:
+                if item.value is not None:
+                    default = _unparse(item.value)
                 description = "TODO: add field description"
 
-            rows.append((field_name, field_type, description))
+            rows.append((field_name, field_type, description, default))
 
         result.append((node.name, rows))
 
     return result
 
 
-def _extract_constants_table(path: Path) -> list[tuple[str, str, str]]:
+def _extract_constants(path: Path) -> list[tuple[str, str, str]]:
     tree = ast.parse(path.read_text(encoding="utf-8"))
     rows: list[tuple[str, str, str]] = []
 
@@ -114,32 +114,42 @@ def _extract_constants_table(path: Path) -> list[tuple[str, str, str]]:
     return rows
 
 
-def _render_model_tables(models: list[tuple[str, list[tuple[str, str, str]]]]) -> str:
+def _render_model_params(models: list[tuple[str, list[tuple[str, str, str, str]]]]) -> str:
     lines: list[str] = []
     for model_name, rows in models:
         lines.append(f"## {model_name}")
         lines.append("")
-        lines.append("### Fields")
+        lines.append("### Parameters")
         lines.append("")
-        lines.append("| Field | Type | Description |")
-        lines.append("|------|------|-------------|")
-        for field_name, field_type, desc in rows:
-            lines.append(
-                f"| {_escape(field_name)} | {_escape(field_type)} | {_escape(desc)} |"
-            )
+
+        def _required_label(default_value: str) -> str:
+            return "required" if not default_value or default_value == "required" else "optional"
+
+        for field_name, field_type, desc, default in rows:
+            label = _required_label(default)
+            details = f"{field_type}; {label}"
+            if default and default != "required":
+                details = f"{details}; default={default}"
+            lines.append(f"- **{field_name}** ({details}): {desc}")
+
+        if not rows:
+            lines.append("No parameters.")
+            lines.append("")
+
         lines.append("")
+
     return "\n".join(lines)
 
 
-def _render_constants_table(rows: list[tuple[str, str, str]]) -> str:
+def _render_constants(rows: list[tuple[str, str, str]]) -> str:
     lines = [
         "## Feature Constants",
         "",
-        "| Constant | Value | Description |",
-        "|----------|-------|-------------|",
+        "### Attributes",
+        "",
     ]
     for name, value, desc in rows:
-        lines.append(f"| {_escape(name)} | {_escape(value)} | {_escape(desc)} |")
+        lines.append(f"- **{name}** ({value}): {desc}")
     lines.append("")
     return "\n".join(lines)
 
@@ -147,14 +157,14 @@ def _render_constants_table(rows: list[tuple[str, str, str]]) -> str:
 def main() -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    api_models = _extract_model_tables(SCHEMAS / "api.py")
-    (OUT_DIR / "api-fields.md").write_text(_render_model_tables(api_models), encoding="utf-8")
+    api_models = _extract_model_params(SCHEMAS / "api.py")
+    (OUT_DIR / "api-fields.md").write_text(_render_model_params(api_models), encoding="utf-8")
 
-    record_models = _extract_model_tables(SCHEMAS / "predict_record.py")
-    inference_models = _extract_model_tables(SCHEMAS / "inference_event.py")
-    constants = _extract_constants_table(SCHEMAS / "feature_schema.py")
-    records_body = _render_model_tables(record_models + inference_models)
-    records_body += "\n" + _render_constants_table(constants)
+    record_models = _extract_model_params(SCHEMAS / "predict_record.py")
+    inference_models = _extract_model_params(SCHEMAS / "inference_event.py")
+    constants = _extract_constants(SCHEMAS / "feature_schema.py")
+    records_body = _render_model_params(record_models + inference_models)
+    records_body += "\n" + _render_constants(constants)
     (OUT_DIR / "records-fields.md").write_text(records_body, encoding="utf-8")
 
 

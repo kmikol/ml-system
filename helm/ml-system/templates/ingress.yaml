@@ -67,12 +67,12 @@ spec:
               service:
                 name: minio
                 port:
-                  number: 9000
+                  number: {{ .Values.minio.apiPort }}
           - path: {{ .Values.ingress.paths.minioConsole | quote }}
             pathType: ImplementationSpecific
             backend:
               service:
                 name: minio
                 port:
-                  number: 9001
+                  number: {{ .Values.minio.consolePort }}
 {{- end }}

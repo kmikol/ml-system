@@ -48,6 +48,8 @@ minio:
   enabled: true
   image: minio/minio
   mcImage: minio/mc
+  apiPort: 9000
+  consolePort: 9001
   persistence:
     size: 10Gi
   service:
@@ -153,6 +155,12 @@ secrets:
     accessKeyId: ""
     secretAccessKey: ""
     encryptSecretKey: ""
+
+training:
+  image: ml-system-training:latest
+
+annotation:
+  image: ml-system-annotation:latest
 
 mlExporter:
   enabled: false

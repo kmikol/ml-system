@@ -130,6 +130,13 @@ spec:
         imagePullPolicy: Never
         workingDir: /app
         command: [python, scripts/seed_dataset.py]
+        resources:
+          requests:
+            cpu: 200m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
         env:
           - name: POSTGRES_PASSWORD
             valueFrom:
@@ -175,6 +182,13 @@ spec:
         imagePullPolicy: Never
         workingDir: /app
         command: [python, scripts/verify_dataset.py]
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
         env:
           - name: POSTGRES_PASSWORD
             valueFrom:
@@ -217,6 +231,13 @@ spec:
         imagePullPolicy: Never
         workingDir: /app
         command: [python, -m, training.main]
+        resources:
+          requests:
+            cpu: 500m
+            memory: 1Gi
+          limits:
+            cpu: 2000m
+            memory: 2Gi
         env:
           - name: MLFLOW_TRACKING_URI
             value: "http://mlflow.ml-system.svc.cluster.local:5000"
@@ -269,6 +290,13 @@ spec:
       container:
         image: bitnami/kubectl:latest
         imagePullPolicy: IfNotPresent
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
         command: [sh, -c]
         args:
           - |

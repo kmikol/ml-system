@@ -84,11 +84,14 @@ def _env_names(containers: list[dict]) -> set[str]:
     return names
 
 
+_DEPLOYMENT_LIKE_KINDS = {"Deployment", "DaemonSet", "StatefulSet", "Rollout"}
+
+
 def _iter_containers(docs: list[dict]):
     """Yield (doc, container_spec) for every container and initContainer in the manifests."""
     for doc in docs:
         spec = doc.get("spec", {})
-        # Deployment / DaemonSet / StatefulSet have spec.template.spec
+        # Deployment / DaemonSet / StatefulSet / Argo Rollout have spec.template.spec
         pod_spec = spec.get("template", {}).get("spec", {})
         for c in pod_spec.get("containers") or []:
             yield doc, c
@@ -115,19 +118,21 @@ def test_helm_lint_local_values():
 
 def test_serving_required_env_vars_present_in_default_values():
     """All require_env() calls in serving/main.py and ModelStore must be satisfied
-    by values.yaml alone, without any overlay.
+    by values.yaml (the serving.env block), not just values-local.yaml.
 
-    This directly tests the gap where vars appear only in values-local.yaml, so
-    any deployment that omits the overlay causes an immediate pod crash.
+    Rendered with both files so required-secret validation passes, but the vars
+    under test (MODEL_NAME, MODEL_STAGE, etc.) come from values.yaml serving.env —
+    values-local.yaml only contributes secret values, not serving env vars.
     """
-    docs = _render_chart([VALUES_DEFAULT])
+    docs = _render_chart([VALUES_DEFAULT, VALUES_LOCAL])
 
     serving_deployments = [
         d
         for d in docs
-        if d.get("kind") == "Deployment" and d.get("metadata", {}).get("name") == "fastapi-serving"
+        if d.get("kind") in _DEPLOYMENT_LIKE_KINDS
+        and d.get("metadata", {}).get("name") == "fastapi-serving"
     ]
-    assert serving_deployments, "fastapi-serving Deployment not found in rendered chart"
+    assert serving_deployments, "fastapi-serving Deployment/Rollout not found in rendered chart"
 
     containers = serving_deployments[0]["spec"]["template"]["spec"]["containers"]
     present = _env_names(containers)
@@ -142,27 +147,19 @@ def test_serving_required_env_vars_present_in_default_values():
 # ── readiness probes ──────────────────────────────────────────────────────────
 
 
-@pytest.mark.parametrize(
-    "values_files,label",
-    [
-        ([VALUES_DEFAULT], "default"),
-        ([VALUES_DEFAULT, VALUES_LOCAL], "local"),
-    ],
-    ids=["default", "local"],
-)
-def test_all_deployments_have_readiness_probe(values_files, label):
+def test_all_deployments_have_readiness_probe():
     """Without a readinessProbe, Kubernetes routes traffic to a pod before it
     is accepting connections, causing 502s during rollouts.
     """
-    docs = _render_chart(values_files)
+    docs = _render_chart([VALUES_DEFAULT, VALUES_LOCAL])
     for doc in docs:
-        if doc.get("kind") != "Deployment":
+        if doc.get("kind") not in _DEPLOYMENT_LIKE_KINDS:
             continue
         name = doc["metadata"]["name"]
         containers = doc["spec"]["template"]["spec"].get("containers") or []
         for c in containers:
             assert c.get("readinessProbe"), (
-                f"Container '{c['name']}' in Deployment '{name}' ({label} values) "
+                f"Container '{c['name']}' in Deployment '{name}' "
                 f"has no readinessProbe. Add one so k8s only routes traffic when ready."
             )
 
@@ -176,7 +173,7 @@ def test_secret_key_refs_resolve_to_declared_keys():
 
     Mismatched keys cause pods to stay in CreateContainerConfigError indefinitely.
     """
-    docs = _render_chart([VALUES_DEFAULT])
+    docs = _render_chart([VALUES_DEFAULT, VALUES_LOCAL])
 
     declared_keys: set[str] = set()
     for doc in docs:
@@ -206,18 +203,18 @@ def test_no_hardcoded_credentials_in_serving_env():
 
     AWS credentials (MinIO keys) must come from secretKeyRef, not from values files.
     """
-    docs = _render_chart([VALUES_DEFAULT])
+    docs = _render_chart([VALUES_DEFAULT, VALUES_LOCAL])
 
     serving = next(
         (
             d
             for d in docs
-            if d.get("kind") == "Deployment"
+            if d.get("kind") in _DEPLOYMENT_LIKE_KINDS
             and d.get("metadata", {}).get("name") == "fastapi-serving"
         ),
         None,
     )
-    assert serving is not None, "fastapi-serving Deployment not found"
+    assert serving is not None, "fastapi-serving Deployment/Rollout not found"
 
     containers = serving["spec"]["template"]["spec"]["containers"]
     for c in containers:
@@ -240,14 +237,16 @@ def test_keda_scaledobject_targets_existing_deployment():
     A stale or renamed scaleTargetRef silently disables autoscaling — KEDA
     creates the ScaledObject but never adjusts replica counts.
     """
-    docs = _render_chart([VALUES_DEFAULT])
+    docs = _render_chart([VALUES_DEFAULT, VALUES_LOCAL])
 
     scaled_objects = [d for d in docs if d.get("kind") == "ScaledObject"]
     assert scaled_objects, (
         "No ScaledObject found in chart output. Is autoscaling.enabled set to true in values.yaml?"
     )
 
-    deployment_names = {d["metadata"]["name"] for d in docs if d.get("kind") == "Deployment"}
+    deployment_names = {
+        d["metadata"]["name"] for d in docs if d.get("kind") in _DEPLOYMENT_LIKE_KINDS
+    }
 
     for so in scaled_objects:
         target = so["spec"]["scaleTargetRef"]["name"]
@@ -267,11 +266,11 @@ def test_service_selectors_match_a_deployment():
     A mismatch means the Service routes to zero pods — requests hang or return
     connection refused.
     """
-    docs = _render_chart([VALUES_DEFAULT])
+    docs = _render_chart([VALUES_DEFAULT, VALUES_LOCAL])
 
     pod_label_sets: list[tuple[str, dict]] = []
     for doc in docs:
-        if doc.get("kind") == "Deployment":
+        if doc.get("kind") in _DEPLOYMENT_LIKE_KINDS:
             labels = doc.get("spec", {}).get("template", {}).get("metadata", {}).get("labels") or {}
             pod_label_sets.append((doc["metadata"]["name"], labels))
 

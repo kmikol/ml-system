@@ -48,6 +48,13 @@ spec:
         image: ml-system-annotation:latest
         imagePullPolicy: Never
         command: [python, -m, sampling.main]
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
         env:
           - name: POSTGRES_PASSWORD
             valueFrom:
@@ -69,6 +76,13 @@ spec:
         image: ml-system-annotation:latest
         imagePullPolicy: Never
         command: [python, -m, annotation.main]
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
         env:
           - name: POSTGRES_PASSWORD
             valueFrom:

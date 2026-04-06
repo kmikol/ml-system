@@ -145,6 +145,13 @@ spec:
         imagePullPolicy: Never
         workingDir: /app
         command: [python, scripts/integrate_annotations.py]
+        resources:
+          requests:
+            cpu: 200m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
         env:
           - name: POSTGRES_PASSWORD
             valueFrom:
@@ -210,6 +217,13 @@ spec:
         imagePullPolicy: Never
         workingDir: /app
         command: [python, -m, training.main]
+        resources:
+          requests:
+            cpu: 500m
+            memory: 1Gi
+          limits:
+            cpu: 2000m
+            memory: 2Gi
         env:
           - name: POSTGRES_PASSWORD
             valueFrom:
@@ -288,6 +302,13 @@ spec:
         imagePullPolicy: Never
         workingDir: /app
         command: [python, scripts/evaluate_and_promote.py]
+        resources:
+          requests:
+            cpu: 200m
+            memory: 512Mi
+          limits:
+            cpu: 500m
+            memory: 1Gi
         env:
           - name: POSTGRES_PASSWORD
             valueFrom:
@@ -355,6 +376,13 @@ spec:
       container:
         image: bitnami/kubectl:latest
         imagePullPolicy: IfNotPresent
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
         command: [sh, -c]
         args:
           - |
@@ -396,6 +424,13 @@ spec:
       container:
         image: bitnami/kubectl:latest
         imagePullPolicy: IfNotPresent
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
         command: [sh, -c]
         args:
           - |
@@ -433,6 +468,13 @@ spec:
         image: ml-system-training:latest
         imagePullPolicy: Never
         workingDir: /app
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
         command: [python, -c]
         args:
           - |

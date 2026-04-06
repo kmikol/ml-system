@@ -9,8 +9,9 @@ This job is the first step of the sample-and-label Argo workflow. It must run
 before the annotation job, which processes only 'candidate' rows.
 
 Environment variables:
-  DATA_CONTROLLER_DB_URL       Required — PostgreSQL DSN.
-  SAMPLING_CANDIDATES_PER_RUN  Max predictions to mark per execution (default: 50).
+
+    DATA_CONTROLLER_DB_URL       Required — PostgreSQL DSN.
+    SAMPLING_CANDIDATES_PER_RUN  Max predictions to mark per execution (default: 50).
 """
 
 from __future__ import annotations

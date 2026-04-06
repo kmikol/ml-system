@@ -1,0 +1,1 @@
+--8<-- "shared/model_artifact_controller/docs/index.md"

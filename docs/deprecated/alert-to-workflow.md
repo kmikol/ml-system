@@ -8,6 +8,22 @@ AlertManager and Argo Events, to an Argo Workflow running the annotation service
 
 ## Overview
 
+```mermaid
+flowchart LR
+  PSI[drift_psi_class_distribution > 0.25 for 30s]
+  P[Prometheus]
+  AM[Alertmanager]
+  ES[Argo EventSource /psi-alert]
+  S[Argo Sensor]
+  W[sample-and-label Workflow]
+
+  PSI --> P
+  P -->|fires PsiThresholdBreached| AM
+  AM -->|webhook POST| ES
+  ES --> S
+  S -->|submit| W
+```
+
 ```
 drift_psi_class_distribution > 0.25 for 30s
   → Prometheus fires PsiThresholdBreached

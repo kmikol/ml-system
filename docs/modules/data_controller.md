@@ -1,0 +1,1 @@
+--8<-- "shared/data_controller/docs/index.md"

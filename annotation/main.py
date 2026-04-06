@@ -2,17 +2,19 @@
 """Annotation job — labels candidate predictions using a file-based ground truth oracle.
 
 For each prediction with annotation_status='candidate' in Postgres, this job:
-  1. Looks up the UUID in the file-based oracle (uuids.npy + labels.npy loaded
-     at startup) to retrieve the ground truth label.
-  2. Writes the label back using AnnotationDataController.write_label(), which
-     also advances annotation_status to 'annotated'.
-  3. Logs a warning and skips predictions whose UUID is absent from the oracle
-     (e.g. predictions from unknown images).
+
+1. Looks up the UUID in the file-based oracle (uuids.npy + labels.npy loaded
+   at startup) to retrieve the ground truth label.
+2. Writes the label back using AnnotationDataController.write_label(), which
+   also advances annotation_status to 'annotated'.
+3. Logs a warning and skips predictions whose UUID is absent from the oracle
+   (e.g. predictions from unknown images).
 
 Environment variables:
-  DATA_CONTROLLER_DB_URL       Required — PostgreSQL DSN.
-  ANNOTATION_ORACLE_PATH       Required — directory containing uuids.npy and labels.npy.
-  ANNOTATION_SAMPLES_PER_RUN   Max samples to annotate per execution (default: 10).
+
+    DATA_CONTROLLER_DB_URL       Required — PostgreSQL DSN.
+    ANNOTATION_ORACLE_PATH       Required — directory containing uuids.npy and labels.npy.
+    ANNOTATION_SAMPLES_PER_RUN   Max samples to annotate per execution (default: 10).
 """
 
 from __future__ import annotations

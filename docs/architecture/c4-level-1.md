@@ -4,7 +4,7 @@ This diagram shows the system boundary, external actors, and high-level informat
 
 ## System Diagram
 
-<div class="arch-diagram">
+<div class="arch-diagram arch-diagram-level1">
 	<img class="arch-diagram-light" src="../../fig/ml-system-simplified.light.drawio.svg" alt="ML System Architecture">
 	<img class="arch-diagram-dark" src="../../fig/ml-system-simplified.dark.drawio.svg" alt="ML System Architecture">
 </div>

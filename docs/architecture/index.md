@@ -4,12 +4,14 @@
 
 This is a **learning project** designed to demonstrate production-grade MLOps architecture patterns and best practices. Built as a complete, runnable system (not a toy example), it implements an end-to-end machine learning pipeline with:
 
+**[View on GitHub](https://github.com/kmikol/ml-system)** | **[Open Issues](https://github.com/kmikol/ml-system/issues)**
+
 - **Local-first design** — runs entirely on Kubernetes (k3s) for cost-effective experimentation and learning
 - **Cloud-native principles** — architected to deploy to cloud platforms with minimal configuration changes
 - **Closed-loop learning** — continuously improves models through event-driven retraining triggered by data quality signals
 - **Safety-first deployments** — canary rollouts with automated validation before production promotion
 
-**Current State:** Working system running MNIST classification. See [Future Work](future-work.md) for planned improvements.
+**Current State:** Working system running MNIST classification. See [open issues](https://github.com/kmikol/ml-system/issues) for planned improvements.
 
 ---
 

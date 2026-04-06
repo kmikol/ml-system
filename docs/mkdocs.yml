@@ -84,6 +84,7 @@ nav:
     - 005 Prometheus Monitoring & Alerting: adr/005-prometheus-monitoring-alerting.md
     - 006 KEDA Autoscaling: adr/006-keda-autoscaling.md
     - 007 Model Artifact Controller Abstraction: adr/007-model-artifact-controller-abstraction.md
+    - 008 ONNX Model Export: adr/008-onnx-model-export.md
   - Modules:
     - Modules Index: modules/index.md
     - Annotation: modules/annotation.md

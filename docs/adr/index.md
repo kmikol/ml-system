@@ -21,8 +21,9 @@ Each ADR follows a standard format:
 | [003](003-local-kubernetes.md) | Local Kubernetes (k3d) vs Docker Compose | Accepted | Development environment uses k3d for environment parity with production Kubernetes |
 | [004](004-mlflow-artifact-storage.md) | MLflow for Model Artifact Management | Accepted | Centralized model versioning with PostgreSQL metadata store and S3/MinIO artifact backend |
 | [005](005-prometheus-monitoring-alerting.md) | Prometheus-Based Monitoring & Alerting | Accepted | Custom metrics with Prometheus + AlertManager + Argo Events for multi-condition orchestration |
-| [006](006-keda-autoscaling.md) | KEDA Autoscaling with Arrival Rate Metric | Accepted | Request arrival rate (not CPU) drives autoscaling for concurrency-limited workloads
+| [006](006-keda-autoscaling.md) | KEDA Autoscaling with Arrival Rate Metric | Accepted | Request arrival rate (not CPU) drives autoscaling for concurrency-limited workloads |
 | [007](007-model-artifact-controller-abstraction.md) | ModelArtifactController Facade Boundary | Proposed | Standardizes artifact/registry access behind a protocol + facade, with MLflow as current backend |
+| [008](008-onnx-model-export.md) | ONNX Model Export vs PyTorch Native | Accepted | Models exported to ONNX format for framework-agnostic serving and reduced deployment dependencies |
 
 ## When to Reference These
 

@@ -48,6 +48,8 @@ minio:
   enabled: true
   image: minio/minio
   mcImage: minio/mc
+  apiPort: 9000
+  consolePort: 9001
   persistence:
     size: 10Gi
   service:
@@ -79,12 +81,19 @@ alertmanager:
   enabled: true
   image: prom/alertmanager:v0.26.0
   port: 9093
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
 
 grafana:
   enabled: true
   image: grafana/grafana:10.3.0
   port: 3000
-  adminPassword: admin
+  adminPassword: ""
   rootUrl: ""
   serveFromSubPath: false
   persistence:
@@ -97,6 +106,14 @@ alloy:
   image: grafana/alloy:latest
   scrapeIntervalSeconds: 5
   httpListenAddr: "0.0.0.0:12345"
+  argoWorkflowsMetricsPort: 9090
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
 
 loki:
   enabled: true
@@ -128,15 +145,22 @@ autoscaling:
   scaleDownPeriodSeconds: 15
 
 # Credentials used by postgres, minio, mlflow, and serving.
-# Override in a values override file or via --set for production deployments.
+# All values must be provided via an override file (e.g. values-local.yaml).
+# Helm will fail at render time if any are missing.
 secrets:
-  minioAccessKey: minioadmin
-  minioSecretKey: minioadmin
-  postgresPassword: mlflow
+  minioAccessKey: ""
+  minioSecretKey: ""
+  postgresPassword: ""
   lakefs:
-    accessKeyId: AKIAIOSFODNN7EXAMPLE
-    secretAccessKey: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
-    encryptSecretKey: "change-me-in-production"
+    accessKeyId: ""
+    secretAccessKey: ""
+    encryptSecretKey: ""
+
+training:
+  image: ml-system-training:latest
+
+annotation:
+  image: ml-system-annotation:latest
 
 mlExporter:
   enabled: false

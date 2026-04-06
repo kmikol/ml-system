@@ -56,6 +56,7 @@ spec:
             - --storage.path=/alertmanager
           ports:
             - containerPort: {{ .Values.alertmanager.port }}
+          resources: {{ toYaml .Values.alertmanager.resources | nindent 12 }}
           readinessProbe:
             httpGet:
               path: /-/ready

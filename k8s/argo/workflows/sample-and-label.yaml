@@ -48,11 +48,23 @@ spec:
         image: ml-system-annotation:latest
         imagePullPolicy: Never
         command: [python, -m, sampling.main]
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
         env:
+          - name: POSTGRES_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: ml-system-secrets
+                key: postgres-password
           - name: DATA_CONTROLLER_DB_URL
             # Full FQDN required — workflow pod runs in argo namespace,
             # postgres service lives in ml-system namespace.
-            value: "postgresql://mlflow:mlflow@postgres.ml-system.svc.cluster.local:5432/mlflow"
+            value: "postgresql://mlflow:$(POSTGRES_PASSWORD)@postgres.ml-system.svc.cluster.local:5432/mlflow"
           - name: SAMPLING_CANDIDATES_PER_RUN
             value: "{{inputs.parameters.max-samples-to-annotate}}"
 
@@ -64,9 +76,21 @@ spec:
         image: ml-system-annotation:latest
         imagePullPolicy: Never
         command: [python, -m, annotation.main]
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
         env:
+          - name: POSTGRES_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: ml-system-secrets
+                key: postgres-password
           - name: DATA_CONTROLLER_DB_URL
-            value: "postgresql://mlflow:mlflow@postgres.ml-system.svc.cluster.local:5432/mlflow"
+            value: "postgresql://mlflow:$(POSTGRES_PASSWORD)@postgres.ml-system.svc.cluster.local:5432/mlflow"
           - name: ANNOTATION_SAMPLES_PER_RUN
             value: "{{inputs.parameters.max-samples-to-annotate}}"
           - name: ANNOTATION_ORACLE_PATH

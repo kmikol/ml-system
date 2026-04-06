@@ -28,6 +28,16 @@ ingress:
 grafana:
   rootUrl: "%(protocol)s://%(domain)s/grafana/"
   serveFromSubPath: true
+  adminPassword: admin
+
+secrets:
+  minioAccessKey: minioadmin
+  minioSecretKey: minioadmin
+  postgresPassword: mlflow
+  lakefs:
+    accessKeyId: AKIAIOSFODNN7EXAMPLE
+    secretAccessKey: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+    encryptSecretKey: local-dev-encrypt-key
 
 postgres:
   service:

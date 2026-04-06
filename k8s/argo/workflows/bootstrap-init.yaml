@@ -130,17 +130,35 @@ spec:
         imagePullPolicy: Never
         workingDir: /app
         command: [python, scripts/seed_dataset.py]
+        resources:
+          requests:
+            cpu: 200m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
         env:
+          - name: POSTGRES_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: ml-system-secrets
+                key: postgres-password
           - name: DATA_CONTROLLER_DB_URL
-            value: "postgresql://mlflow:mlflow@postgres.ml-system.svc.cluster.local:5432/mlflow"
+            value: "postgresql://mlflow:$(POSTGRES_PASSWORD)@postgres.ml-system.svc.cluster.local:5432/mlflow"
           - name: DATASET_S3_ENDPOINT_URL
             value: "http://minio.ml-system.svc.cluster.local:9000"
           - name: DATASET_BUCKET
             value: "mnist-dataset"
           - name: AWS_ACCESS_KEY_ID
-            value: "minioadmin"
+            valueFrom:
+              secretKeyRef:
+                name: ml-system-secrets
+                key: minio-access-key
           - name: AWS_SECRET_ACCESS_KEY
-            value: "minioadmin"
+            valueFrom:
+              secretKeyRef:
+                name: ml-system-secrets
+                key: minio-secret-key
           - name: LAKEFS_ENDPOINT_URL
             value: "http://lakefs.ml-system.svc.cluster.local:8000"
           - name: LAKEFS_ACCESS_KEY_ID
@@ -164,17 +182,35 @@ spec:
         imagePullPolicy: Never
         workingDir: /app
         command: [python, scripts/verify_dataset.py]
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
         env:
+          - name: POSTGRES_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: ml-system-secrets
+                key: postgres-password
           - name: DATA_CONTROLLER_DB_URL
-            value: "postgresql://mlflow:mlflow@postgres.ml-system.svc.cluster.local:5432/mlflow"
+            value: "postgresql://mlflow:$(POSTGRES_PASSWORD)@postgres.ml-system.svc.cluster.local:5432/mlflow"
           - name: DATASET_S3_ENDPOINT_URL
             value: "http://minio.ml-system.svc.cluster.local:9000"
           - name: DATASET_BUCKET
             value: "mnist-dataset"
           - name: AWS_ACCESS_KEY_ID
-            value: "minioadmin"
+            valueFrom:
+              secretKeyRef:
+                name: ml-system-secrets
+                key: minio-access-key
           - name: AWS_SECRET_ACCESS_KEY
-            value: "minioadmin"
+            valueFrom:
+              secretKeyRef:
+                name: ml-system-secrets
+                key: minio-secret-key
 
     # ── Step 3: train ─────────────────────────────────────────────────────────
     # Waits for MLflow to be ready, then trains and registers the model.
@@ -195,17 +231,35 @@ spec:
         imagePullPolicy: Never
         workingDir: /app
         command: [python, -m, training.main]
+        resources:
+          requests:
+            cpu: 500m
+            memory: 1Gi
+          limits:
+            cpu: 2000m
+            memory: 2Gi
         env:
           - name: MLFLOW_TRACKING_URI
             value: "http://mlflow.ml-system.svc.cluster.local:5000"
           - name: MLFLOW_S3_ENDPOINT_URL
             value: "http://minio.ml-system.svc.cluster.local:9000"
+          - name: POSTGRES_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: ml-system-secrets
+                key: postgres-password
           - name: AWS_ACCESS_KEY_ID
-            value: "minioadmin"
+            valueFrom:
+              secretKeyRef:
+                name: ml-system-secrets
+                key: minio-access-key
           - name: AWS_SECRET_ACCESS_KEY
-            value: "minioadmin"
+            valueFrom:
+              secretKeyRef:
+                name: ml-system-secrets
+                key: minio-secret-key
           - name: DATA_CONTROLLER_DB_URL
-            value: "postgresql://mlflow:mlflow@postgres.ml-system.svc.cluster.local:5432/mlflow"
+            value: "postgresql://mlflow:$(POSTGRES_PASSWORD)@postgres.ml-system.svc.cluster.local:5432/mlflow"
           - name: DATASET_S3_ENDPOINT_URL
             value: "http://minio.ml-system.svc.cluster.local:9000"
           - name: DATASET_BUCKET
@@ -236,6 +290,13 @@ spec:
       container:
         image: bitnami/kubectl:latest
         imagePullPolicy: IfNotPresent
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
         command: [sh, -c]
         args:
           - |

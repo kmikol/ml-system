@@ -4,6 +4,6 @@ A production-grade MLOps platform demonstrating end-to-end machine learning work
 
 ## Quick Links
 
-- **[Documentation](https://kmikol.github.io/ml-system/)** — Architecture, setup, and design decisions
-- **[Getting Started](docs/getting-started/setup.md)** — How to run the system locally
+- **[Documentation](https://kmikol.github.io/ml-system/architecture/)** — Architecture, setup, and design decisions
+- **[Getting Started](https://kmikol.github.io/ml-system/getting-started/setup/)** — How to run the system locally
 - **[Open Issues](https://github.com/kmikol/ml-system/issues)** — Planned improvements

@@ -181,13 +181,35 @@ def _main() -> int:
         logger.error(f"Failed to search model versions: {exc}")
         return 0
 
+    # Determine target stage. During canary rollouts the retrain workflow sets
+    # PROMOTE_STAGE=Canary so the model is validated progressively before
+    # becoming Production.  Bootstrap (first deploy) uses the default Production.
+    target_stage = ModelStage(os.environ.get("PROMOTE_STAGE", "Production"))
+
     try:
-        store.promote(version)
-        logger.info(f"Promoted v{version.version} → Production")
+        store.promote(version, stage=target_stage)
+        logger.info(f"Promoted v{version.version} → {target_stage.value}")
+        # Write the run_id (not the MLflow version number) because downstream
+        # Prometheus queries match on run_id which is what the serving layer
+        # exposes as model_version in metrics.
         with open(promoted_version_output_path, "w", encoding="utf-8") as f:
-            f.write(version.version)
+            f.write(new_run_id)
     except ModelArtifactError as exc:
         logger.error(f"Promotion failed: {exc}")
+        return 0
+
+    # Write the current production model version for downstream canary analysis.
+    # The retrain workflow uses this to tell the AnalysisTemplate which version
+    # is the baseline so Prometheus queries can compare PSI.
+    prod_version_output = os.environ.get("PRODUCTION_VERSION_OUTPUT_PATH", "")
+    if prod_version_output and has_production:
+        try:
+            prod_ver_id = store.get_current_version_id(ModelStage.PRODUCTION)
+            with open(prod_version_output, "w", encoding="utf-8") as f:
+                f.write(prod_ver_id)
+            logger.info(f"Production version ID written to {prod_version_output}")
+        except Exception as exc:
+            logger.warning(f"Could not write production version ID: {exc}")
 
     return 0
 

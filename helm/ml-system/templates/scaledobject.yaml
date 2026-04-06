@@ -7,6 +7,10 @@ metadata:
 spec:
   scaleTargetRef:
     name: fastapi-serving
+    {{- if .Values.canary.enabled }}
+    apiVersion: argoproj.io/v1alpha1
+    kind: Rollout
+    {{- end }}
   minReplicaCount: {{ .Values.autoscaling.minReplicas }}
   maxReplicaCount: {{ .Values.autoscaling.maxReplicas }}
   # How often KEDA queries the metric.

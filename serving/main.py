@@ -10,6 +10,7 @@ import threading
 import time
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from pathlib import Path
 from uuid import uuid4
 
 import numpy as np
@@ -37,7 +38,28 @@ setup_logging("serving")
 logger = logging.getLogger(__name__)
 
 # ── All config from env, no defaults ─────────────────────────────
-MODEL_STAGE = ModelStage(require_env("MODEL_STAGE"))
+_PODINFO_MODEL_STAGE_PATH = "/etc/podinfo/model-stage"
+
+
+def _resolve_model_stage() -> ModelStage:
+    """Read model stage from Downward API file, falling back to env var.
+
+    Argo Rollouts sets canaryMetadata/stableMetadata labels on pods.  The
+    Downward API projects the ``model-stage`` label to a file so the serving
+    process knows whether to load Production or Canary without an env var
+    change (which would require a pod restart to toggle).
+    """
+    try:
+        stage_str = Path(_PODINFO_MODEL_STAGE_PATH).read_text().strip()
+        if stage_str:
+            logger.info(f"Model stage from Downward API: {stage_str}")
+            return ModelStage(stage_str)
+    except FileNotFoundError:
+        pass
+    return ModelStage(require_env("MODEL_STAGE"))
+
+
+MODEL_STAGE = _resolve_model_stage()
 SIMULATED_LATENCY_S = int(require_env("SERVING_SIMULATED_LATENCY_MS")) / 1000.0
 # Semaphore caps concurrency to 1. At 333ms service time this saturates at ~3 RPS.
 # Requests beyond capacity queue here — latency grows linearly with queue depth.

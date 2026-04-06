@@ -30,6 +30,7 @@ import sys
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections import defaultdict
 
@@ -93,6 +94,21 @@ def _inversion_probability_at(t: float, target_p: float, ramp: float) -> float:
     return min(target_p * t / ramp, target_p)
 
 
+def _detect_default_url() -> str:
+    candidates = [
+        ("http://localhost/serving", "http://localhost/serving/health"),
+        ("http://localhost:8000", "http://localhost:8000/health"),
+    ]
+    for base, health in candidates:
+        try:
+            with urllib.request.urlopen(health, timeout=2) as resp:
+                if resp.status == 200:
+                    return urllib.parse.urljoin(base + "/", "predict")
+        except Exception:
+            continue
+    return "http://localhost/serving/predict"
+
+
 def _send(url: str, inv_prob: float) -> None:
     """Send one request; inv_prob is sampled at dispatch time, not inside the thread."""
     if random.random() < inv_prob:
@@ -138,8 +154,9 @@ def main() -> None:
         default=60.0,
         help="Seconds to ramp inversion probability from 0 to target (default: 60)",
     )
-    parser.add_argument("--url", default="http://localhost:8000/predict")
+    parser.add_argument("--url", default=None)
     args = parser.parse_args()
+    url = args.url or _detect_default_url()
 
     normal, inverted = _load_pools()
     _normal_pool.extend(normal)
@@ -153,7 +170,7 @@ def main() -> None:
     print(
         f"Inversion ramp    : {args.ramp}s  (0% → {args.inversion_probability * 100:.0f}% over ramp period)"
     )
-    print(f"Target            : {args.url}")
+    print(f"Target            : {url}")
     print("Ctrl-C to stop early\n")
 
     start = time.perf_counter()
@@ -184,7 +201,7 @@ def main() -> None:
         target_sent = int(elapsed / interval) + 1
         if sent < target_sent:
             inv_prob = _inversion_probability_at(elapsed, args.inversion_probability, args.ramp)
-            threading.Thread(target=_send, args=(args.url, inv_prob), daemon=True).start()
+            threading.Thread(target=_send, args=(url, inv_prob), daemon=True).start()
             sent += 1
             continue
 

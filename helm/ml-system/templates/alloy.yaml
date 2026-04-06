@@ -67,11 +67,19 @@ data:
         source_labels = ["__meta_kubernetes_pod_name"]
         target_label  = "pod"
       }
+      // Copy the model-stage Kubernetes label (Production/Canary) set by Argo
+      // Rollouts canaryMetadata/stableMetadata so serving metrics can be split
+      // by deployment role in Grafana dashboards.
+      rule {
+        source_labels = ["__meta_kubernetes_pod_label_model_stage"]
+        target_label  = "model_stage"
+      }
     }
 
     prometheus.scrape "serving" {
       targets         = discovery.relabel.serving_pods.output
       scrape_interval = "{{ .Values.alloy.scrapeIntervalSeconds }}s"
+      scrape_timeout  = "{{ .Values.alloy.scrapeIntervalSeconds }}s"
       metrics_path    = "/metrics"
       forward_to      = [prometheus.remote_write.local.receiver]
     }
@@ -81,6 +89,7 @@ data:
     prometheus.scrape "ml_exporter" {
       targets         = [{"__address__" = "ml-exporter.{{ .Values.global.namespace }}.svc.cluster.local:{{ .Values.mlExporter.port }}"}]
       scrape_interval = "{{ .Values.alloy.scrapeIntervalSeconds }}s"
+      scrape_timeout  = "{{ .Values.alloy.scrapeIntervalSeconds }}s"
       metrics_path    = "/metrics"
       forward_to      = [prometheus.remote_write.local.receiver]
     }
@@ -91,6 +100,7 @@ data:
     prometheus.scrape "argo_workflows" {
       targets         = [{"__address__" = "argo-workflows-workflow-controller-metrics.argo.svc.cluster.local:9090"}]
       scrape_interval = "{{ .Values.alloy.scrapeIntervalSeconds }}s"
+      scrape_timeout  = "{{ .Values.alloy.scrapeIntervalSeconds }}s"
       forward_to      = [prometheus.remote_write.local.receiver]
       job_name        = "argo-workflows"
     }

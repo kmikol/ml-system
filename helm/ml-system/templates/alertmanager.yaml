@@ -14,11 +14,11 @@ data:
         - match:
             alertname: PsiThresholdBreached
           receiver: 'argo-events-webhook'
-          repeat_interval: 3m
+          repeat_interval: 30m
         - match:
             alertname: AnnotationCountReached
           receiver: 'annotation-ready-webhook'
-          repeat_interval: 3m
+          repeat_interval: 30m
     receivers:
       - name: 'default'
       - name: 'argo-events-webhook'

@@ -40,6 +40,12 @@ rules:
   - apiGroups: [argoproj.io]
     resources: [workflowtaskresults]
     verbs: [create, patch]
+  - apiGroups: [argoproj.io]
+    resources: [rollouts]
+    verbs: [get, patch]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [list, delete]
 
 ---
 # Bind the ClusterRole to the bootstrap-restarter SA in the argo namespace.
@@ -216,17 +222,55 @@ spec:
             value: "1e-3"
 
     # ── Step 4: restart-serving ───────────────────────────────────────────────
-    # Rolls out fastapi-serving so it picks up the freshly registered model.
-    # Uses bitnami/kubectl (pulled by k3s); the bootstrap-restarter SA token
-    # is automatically mounted at /var/run/secrets/kubernetes.io/serviceaccount/.
+    # Restarts fastapi-serving so it picks up the freshly registered model.
+    # Detects whether the serving workload is an Argo Rollout or a plain
+    # Deployment and uses the appropriate restart mechanism.
+    #
+    # Bootstrap race: during first deploy the Rollout creates a pod before
+    # the model is registered. That pod exhausts its retries and stays 503.
+    # The Rollout then enters Degraded (ProgressDeadlineExceeded). To recover:
+    #   1. Patch restartAt → triggers a new ReplicaSet (new revision)
+    #   2. Delete stale pods → forces the new ReplicaSet to create fresh pods
+    #   3. Fresh pods find the model in MLflow and pass readiness
     - name: restart-serving
       container:
         image: bitnami/kubectl:latest
         imagePullPolicy: IfNotPresent
-        command:
-          - kubectl
-          - rollout
-          - restart
-          - deployment/fastapi-serving
-          - -n
-          - ml-system
+        command: [sh, -c]
+        args:
+          - |
+            set -e
+            TIMEOUT=300
+            if kubectl -n ml-system get rollout fastapi-serving >/dev/null 2>&1; then
+              echo "Detected Argo Rollout"
+
+              # Bootstrap restart: delete existing pods so the SAME ReplicaSet
+              # recreates them. The model now exists in MLflow, so fresh pods
+              # will pass readiness.
+              #
+              # We must NOT patch the pod template (that creates a new revision
+              # which Argo Rollouts treats as canary — the canary pods get
+              # model-stage=Canary but no Canary alias exists yet).
+              echo "Step 1: deleting stale serving pods"
+              kubectl -n ml-system delete pods -l app=fastapi-serving --wait=false || true
+
+              echo "Step 2: waiting for Rollout to become Healthy (timeout: ${TIMEOUT}s)"
+              DEADLINE=$(($(date +%s) + TIMEOUT))
+              while [ "$(date +%s)" -lt "$DEADLINE" ]; do
+                PHASE=$(kubectl -n ml-system get rollout fastapi-serving \
+                  -o jsonpath='{.status.phase}' 2>/dev/null || echo "unknown")
+                echo "  phase: $PHASE"
+                if [ "$PHASE" = "Healthy" ]; then
+                  echo "Serving restart complete."
+                  exit 0
+                fi
+                sleep 10
+              done
+              echo "ERROR: Rollout did not become Healthy within ${TIMEOUT}s"
+              exit 1
+            else
+              echo "Detected Deployment — using rollout restart"
+              kubectl rollout restart deployment/fastapi-serving -n ml-system
+              kubectl rollout status deployment/fastapi-serving -n ml-system --timeout=300s
+              echo "Serving restart complete."
+            fi

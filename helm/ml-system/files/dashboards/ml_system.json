@@ -169,8 +169,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(rate(http_requests_total{handler=\"/predict\"}[1m]))",
-          "legendFormat": "completion rate",
+          "expr": "sum by (model_stage) (rate(http_requests_total{handler=\"/predict\"}[1m]))",
+          "legendFormat": "completion rate ({{model_stage}})",
           "refId": "B"
         },
         {

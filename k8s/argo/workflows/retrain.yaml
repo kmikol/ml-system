@@ -1,6 +1,6 @@
 # k8s/argo/workflows/retrain.yaml
 #
-# RBAC + WorkflowTemplate: model retraining pipeline.
+# RBAC + WorkflowTemplate: model retraining pipeline with canary rollout.
 #
 # Triggered by the retrain-sensor when BOTH alerts fire simultaneously:
 #   - PsiThresholdBreached    (PSI class distribution > 0.25)
@@ -11,19 +11,24 @@
 #      annotated predictions; writes version_id to /tmp/version_id.txt
 #   2. train                 — trains on the new version, registers in MLflow
 #                              (promotion deferred); writes run_id to /tmp/run_id.txt
-#   3. evaluate-and-promote  — compares val_acc against Production; promotes if
-#                              new model meets threshold and writes promoted
-#                              model version to /tmp/promoted_model_version.txt
-#   4. rollout-serving       — triggers a Deployment rollout restart so serving
-#                              reloads the current Production alias on startup
-#
-# Model deployment strategy: stage alias + explicit restart.
-# Serving loads MODEL_STAGE (Production) at startup and does not poll.
+#   3. evaluate-and-promote  — compares val_acc against Production; promotes to
+#                              Canary alias if new model meets threshold.
+#                              Writes canary model version + current production
+#                              model version for downstream canary analysis.
+#   4. trigger-canary-rollout — patches the Argo Rollout annotations to start
+#                               progressive canary deployment with NGINX traffic
+#                               splitting (20% → 40% → 100%), validated by PSI
+#                               analysis at each step.
+#   5. wait-for-rollout       — blocks until the Argo Rollout either succeeds
+#                               (full promotion) or aborts (PSI analysis failed).
+#   6. promote-to-production  — moves the MLflow alias from Canary → Production
+#                               so that any future pod restarts load the correct
+#                               model. Only runs if the rollout succeeded.
 
 ---
 # ServiceAccount for the retrain workflow.
-# Needs workflowtaskresults access (required by Argo emissary executor)
-# and deployment get/list/watch/patch so rollout status can observe progress.
+# Needs workflowtaskresults access (required by Argo emissary executor),
+# deployment/rollout get/list/watch/patch for rollout management.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -39,8 +44,14 @@ rules:
   - apiGroups: [argoproj.io]
     resources: [workflowtaskresults]
     verbs: [create, patch]
+  - apiGroups: [argoproj.io]
+    resources: [workflows]
+    verbs: [get, list]
   - apiGroups: [apps]
     resources: [deployments]
+    verbs: [get, list, watch, patch]
+  - apiGroups: [argoproj.io]
+    resources: [rollouts]
     verbs: [get, list, watch, patch]
 
 ---
@@ -66,12 +77,17 @@ metadata:
 spec:
   serviceAccountName: retrain-workflow
   entrypoint: retrain
+  synchronization:
+    mutexes:
+      - name: retrain-lock
 
   templates:
 
     # ── Entrypoint: sequential steps ─────────────────────────────────────────
     - name: retrain
       steps:
+        - - name: cooldown-gate
+            template: cooldown-gate
         - - name: integrate-annotations
             template: integrate-annotations
         - - name: train
@@ -88,19 +104,61 @@ spec:
                   value: "{{steps.train.outputs.parameters.run-id}}"
                 - name: version-id
                   value: "{{steps.integrate-annotations.outputs.parameters.version-id}}"
-        - - name: rollout-serving
-            template: rollout-serving
+        - - name: trigger-canary-rollout
+            template: trigger-canary-rollout
             arguments:
               parameters:
-                - name: model-version
+                - name: canary-model-version
                   value: "{{steps.evaluate-and-promote.outputs.parameters.model-version}}"
+                - name: production-model-version
+                  value: "{{steps.evaluate-and-promote.outputs.parameters.production-model-version}}"
             when: "'{{steps.evaluate-and-promote.outputs.parameters.model-version}}' != ''"
+        - - name: wait-for-rollout
+            template: wait-for-rollout
+            when: "'{{steps.evaluate-and-promote.outputs.parameters.model-version}}' != ''"
+        - - name: promote-to-production
+            template: promote-to-production
+            arguments:
+              parameters:
+                - name: canary-model-version
+                  value: "{{steps.evaluate-and-promote.outputs.parameters.model-version}}"
+            when: "'{{steps.evaluate-and-promote.outputs.parameters.model-version}}' != '' && '{{steps.wait-for-rollout.outputs.parameters.rollout-status}}' == 'healthy'"
+
+    # ── Step 0: cooldown-gate ──────────────────────────────────────────────
+    # Skip this run if a retrain workflow completed within the last N minutes.
+    # This prevents back-to-back retrains when alerts keep re-firing after
+    # a successful rollout.
+    - name: cooldown-gate
+      container:
+        image: bitnami/kubectl:latest
+        command: [sh, -c]
+        args:
+          - |
+            COOLDOWN_MINUTES=${RETRAIN_COOLDOWN_MINUTES:-30}
+            echo "Checking for retrain workflows completed in the last ${COOLDOWN_MINUTES}m..."
+            CUTOFF=$(date -u -d "-${COOLDOWN_MINUTES} minutes" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+                  || date -u -v-${COOLDOWN_MINUTES}M +%Y-%m-%dT%H:%M:%SZ)
+            # Find succeeded retrain workflows (exclude ourselves)
+            RECENT=$(kubectl get workflows -n argo \
+              -l workflows.argoproj.io/workflow-template=retrain \
+              --field-selector status.phase=Succeeded \
+              -o jsonpath='{range .items[*]}{.status.finishedAt}{"\n"}{end}' \
+              | sort -r | head -1)
+            if [ -z "$RECENT" ]; then
+              echo "No previous retrain found. Proceeding."
+              exit 0
+            fi
+            echo "Last retrain finished: $RECENT, cutoff: $CUTOFF"
+            if [ "$RECENT" \> "$CUTOFF" ]; then
+              echo "Last retrain was less than ${COOLDOWN_MINUTES}m ago. Aborting."
+              exit 1
+            fi
+            echo "Cooldown elapsed. Proceeding."
+        env:
+          - name: RETRAIN_COOLDOWN_MINUTES
+            value: "30"
 
     # ── Step 1: integrate-annotations ────────────────────────────────────────
-    # Queries annotated predictions not yet in any dataset version, downloads
-    # their images from MinIO (stored by serving at predictions/{uuid}.npy),
-    # and creates a new cumulative dataset version.
-    # Idempotent: if no new annotations exist, re-uses the current version.
     - name: integrate-annotations
       outputs:
         parameters:
@@ -152,13 +210,10 @@ spec:
             value: "/tmp/version_id.txt"
 
     # ── Step 2: train ─────────────────────────────────────────────────────────
-    # Trains on the latest dataset version (integrate-annotations step committed
-    # it; get_latest_version() returns it). AUTO_PROMOTE=false defers promotion
-    # to the evaluate-and-promote step. Writes run_id for downstream use.
     - name: train
       inputs:
         parameters:
-          - name: version-id  # explicit dependency on integrate-annotations
+          - name: version-id
       outputs:
         parameters:
           - name: run-id
@@ -225,12 +280,9 @@ spec:
             value: "/tmp/run_id.txt"
 
     # ── Step 3: evaluate-and-promote ─────────────────────────────────────────
-    # Scores the current Production model on the NEW val split (same data as
-    # the new model was validated on) and uses that as the promotion baseline.
-    # This makes the comparison fair even when the dataset changes between
-    # versions — a harder val split no longer unfairly penalises the new model.
-    # The baseline is logged to MLflow on the new run as "baseline_val_acc".
-    # Always exits 0 — not promoting is a valid outcome.
+    # Promotes to Canary alias (not Production) so the Argo Rollout can
+    # progressively validate before the model becomes Production.
+    # Also outputs the current Production model version for PSI comparison.
     - name: evaluate-and-promote
       inputs:
         parameters:
@@ -241,6 +293,10 @@ spec:
           - name: model-version
             valueFrom:
               path: /tmp/promoted_model_version.txt
+          - name: production-model-version
+            valueFrom:
+              path: /tmp/production_model_version.txt
+              default: ""
       container:
         image: ml-system-training:latest
         imagePullPolicy: Never
@@ -283,21 +339,129 @@ spec:
             value: "{{inputs.parameters.version-id}}"
           - name: MIN_VAL_ACC_IMPROVEMENT
             value: "0.0"
+          - name: PROMOTE_STAGE
+            value: "Canary"
           - name: PROMOTED_MODEL_VERSION_OUTPUT_PATH
             value: "/tmp/promoted_model_version.txt"
+          - name: PRODUCTION_VERSION_OUTPUT_PATH
+            value: "/tmp/production_model_version.txt"
 
-    # ── Step 4: rollout-serving ─────────────────────────────────────────────
-    # Restart serving deployment so each pod reloads the current Production alias.
-    - name: rollout-serving
+    # ── Step 4: trigger-canary-rollout ───────────────────────────────────────
+    # Patches the Argo Rollout with canary/production model version annotations
+    # and a restart timestamp. Argo Rollouts detects the spec change and
+    # creates a canary ReplicaSet with pods that load the Canary MLflow alias.
+    - name: trigger-canary-rollout
       inputs:
         parameters:
-          - name: model-version
+          - name: canary-model-version
+          - name: production-model-version
       container:
         image: bitnami/kubectl:latest
         imagePullPolicy: IfNotPresent
         command: [sh, -c]
         args:
           - |
-            echo "Promoted model version {{inputs.parameters.model-version}}; restarting serving to load Production alias"
-            kubectl -n ml-system rollout restart deployment/fastapi-serving
-            kubectl -n ml-system rollout status deployment/fastapi-serving --timeout=300s
+            set -e
+            CANARY_VER="{{inputs.parameters.canary-model-version}}"
+            PROD_VER="{{inputs.parameters.production-model-version}}"
+            STAMP=$(date +%s)
+            echo "Triggering canary rollout: canary=$CANARY_VER production=$PROD_VER"
+            # Patch both top-level annotations (for analysis args fieldRef)
+            # and pod template annotation (to force a new ReplicaSet / revision).
+            kubectl -n ml-system patch rollout fastapi-serving --type=merge -p "{
+              \"metadata\": {
+                \"annotations\": {
+                  \"ml-system/canary-model-version\": \"$CANARY_VER\",
+                  \"ml-system/production-model-version\": \"$PROD_VER\"
+                }
+              },
+              \"spec\": {
+                \"template\": {
+                  \"metadata\": {
+                    \"annotations\": {
+                      \"ml-system/restart-stamp\": \"$STAMP\"
+                    }
+                  }
+                }
+              }
+            }"
+            echo "Rollout patch applied."
+
+    # ── Step 5: wait-for-rollout ─────────────────────────────────────────────
+    # Polls the Argo Rollout status until it reaches a terminal state.
+    # Outputs "healthy" on full promotion, "degraded" on abort.
+    - name: wait-for-rollout
+      outputs:
+        parameters:
+          - name: rollout-status
+            valueFrom:
+              path: /tmp/rollout_status.txt
+      container:
+        image: bitnami/kubectl:latest
+        imagePullPolicy: IfNotPresent
+        command: [sh, -c]
+        args:
+          - |
+            set -e
+            echo "Waiting for Argo Rollout to reach terminal state..."
+            # Poll until phase is Healthy or Degraded.
+            while true; do
+              PHASE=$(kubectl -n ml-system get rollout fastapi-serving \
+                -o jsonpath='{.status.phase}' 2>/dev/null || echo "unknown")
+              echo "  rollout phase: $PHASE"
+              case "$PHASE" in
+                Healthy)
+                  echo "Rollout completed successfully."
+                  echo "healthy" > /tmp/rollout_status.txt
+                  exit 0
+                  ;;
+                Degraded)
+                  echo "Rollout aborted — canary PSI analysis failed."
+                  echo "degraded" > /tmp/rollout_status.txt
+                  exit 0
+                  ;;
+              esac
+              sleep 15
+            done
+
+    # ── Step 6: promote-to-production ────────────────────────────────────────
+    # Moves the MLflow alias from Canary → Production after a successful
+    # canary rollout. This ensures that if any pod restarts (scaling,
+    # preemption, node failure) it loads the validated model.
+    - name: promote-to-production
+      inputs:
+        parameters:
+          - name: canary-model-version
+      container:
+        image: ml-system-training:latest
+        imagePullPolicy: Never
+        workingDir: /app
+        command: [python, -c]
+        args:
+          - |
+            import os, sys
+            sys.path.insert(0, "/app")
+            os.environ.setdefault("MODEL_NAME", "ml_system_model")
+            os.environ.setdefault("MLFLOW_TRACKING_URI", "http://mlflow.ml-system.svc.cluster.local:5000")
+            os.environ.setdefault("MLFLOW_S3_ENDPOINT_URL", "http://minio.ml-system.svc.cluster.local:9000")
+            from shared.model_artifact_controller import ModelStore, ModelStage
+            store = ModelStore()
+            version = store.get_version_for_run("{{inputs.parameters.canary-model-version}}")
+            if version is None:
+                # canary-model-version is actually the version string, not run_id.
+                # Use the MLflow backend directly to promote by version.
+                store._backend.promote_model("ml_system_model", "{{inputs.parameters.canary-model-version}}", alias="Production")
+            else:
+                store.promote(version, stage=ModelStage.PRODUCTION)
+            print("Promoted v{{inputs.parameters.canary-model-version}} -> Production")
+        env:
+          - name: MLFLOW_TRACKING_URI
+            value: "http://mlflow.ml-system.svc.cluster.local:5000"
+          - name: MLFLOW_S3_ENDPOINT_URL
+            value: "http://minio.ml-system.svc.cluster.local:9000"
+          - name: AWS_ACCESS_KEY_ID
+            value: "minioadmin"
+          - name: AWS_SECRET_ACCESS_KEY
+            value: "minioadmin"
+          - name: MODEL_NAME
+            value: "ml_system_model"

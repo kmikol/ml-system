@@ -1,25 +1,69 @@
 {{- if .Values.serving.enabled }}
-apiVersion: apps/v1
-kind: Deployment
+{{- if .Values.canary.enabled }}
+# ═══════════════════════════════════════════════════════════════════════════════
+# Argo Rollout with NGINX canary traffic routing
+# ═══════════════════════════════════════════════════════════════════════════════
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
 metadata:
   name: fastapi-serving
   namespace: {{ .Values.global.namespace }}
   labels:
     app: fastapi-serving
+  annotations:
+    # Placeholder annotations — the retrain workflow patches these with real
+    # model version IDs when triggering a canary rollout. They must exist at
+    # deploy time so Argo Rollouts can resolve the fieldRef in analysis args.
+    ml-system/canary-model-version: ""
+    ml-system/production-model-version: ""
 spec:
   {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.serving.replicas }}
   {{- end }}
+  revisionHistoryLimit: 2
   selector:
     matchLabels:
       app: fastapi-serving
+  strategy:
+    canary:
+      canaryService: fastapi-serving-canary
+      stableService: fastapi-serving
+      trafficRouting:
+        nginx:
+          stableIngress: ml-system-ingress-serving
+      # Metadata applied to canary vs stable pods. The Downward API projects
+      # the model-stage label into /etc/podinfo/model-stage so serving.main
+      # loads the correct MLflow alias without an env var change.
+      canaryMetadata:
+        labels:
+          model-stage: Canary
+          rollout-role: canary
+      stableMetadata:
+        labels:
+          model-stage: Production
+          rollout-role: stable
+      steps:
+        {{- range .Values.canary.steps }}
+        - setWeight: {{ .weight }}
+        - analysis:
+            templates:
+              - templateName: canary-psi-analysis
+            args:
+              - name: canary-model-version
+                valueFrom:
+                  fieldRef:
+                    fieldPath: metadata.annotations['ml-system/canary-model-version']
+              - name: production-model-version
+                valueFrom:
+                  fieldRef:
+                    fieldPath: metadata.annotations['ml-system/production-model-version']
+        {{- end }}
   template:
     metadata:
       labels:
         app: fastapi-serving
     spec:
       initContainers:
-        # Block until MLflow is accepting requests.
         - name: wait-for-mlflow
           image: busybox
           imagePullPolicy: IfNotPresent
@@ -41,7 +85,6 @@ spec:
             - name: {{ $key }}
               value: {{ $val | quote }}
             {{- end }}
-            # AWS credentials from Secret so they are not exposed in values files.
             - name: AWS_ACCESS_KEY_ID
               valueFrom:
                 secretKeyRef:
@@ -53,17 +96,91 @@ spec:
                   name: ml-system-secrets
                   key: minio-secret-key
           readinessProbe:
-            # Serving returns 503 until the ONNX model is loaded from MLflow.
-            # Without this probe, k8s routes traffic to the pod before it is ready.
             httpGet:
               path: /health
               port: {{ .Values.serving.port }}
             initialDelaySeconds: 5
             periodSeconds: 5
-            failureThreshold: 24   # up to 2 min for model download on slow connections
+            failureThreshold: 24
           resources:
             {{- toYaml .Values.serving.resources | nindent 12 }}
+          volumeMounts:
+            - name: podinfo
+              mountPath: /etc/podinfo
+      volumes:
+        - name: podinfo
+          downwardAPI:
+            items:
+              - path: model-stage
+                fieldRef:
+                  fieldPath: metadata.labels['model-stage']
+{{- else }}
+# ═══════════════════════════════════════════════════════════════════════════════
+# Standard Deployment (canary disabled)
+# ═══════════════════════════════════════════════════════════════════════════════
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fastapi-serving
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: fastapi-serving
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.serving.replicas }}
+  {{- end }}
+  selector:
+    matchLabels:
+      app: fastapi-serving
+  template:
+    metadata:
+      labels:
+        app: fastapi-serving
+    spec:
+      initContainers:
+        - name: wait-for-mlflow
+          image: busybox
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - |
+              until wget -q -O- http://mlflow:{{ .Values.mlflow.port }}/health; do
+                echo "waiting for mlflow..."; sleep 5
+              done
+      containers:
+        - name: serving
+          image: {{ .Values.serving.image }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          ports:
+            - containerPort: {{ .Values.serving.port }}
+          env:
+            {{- range $key, $val := .Values.serving.env }}
+            - name: {{ $key }}
+              value: {{ $val | quote }}
+            {{- end }}
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: ml-system-secrets
+                  key: minio-access-key
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ml-system-secrets
+                  key: minio-secret-key
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.serving.port }}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 24
+          resources:
+            {{- toYaml .Values.serving.resources | nindent 12 }}
+{{- end }}
 ---
+# Stable service — always required (used by both Rollout and Deployment).
 apiVersion: v1
 kind: Service
 metadata:
@@ -79,4 +196,63 @@ spec:
       {{- end }}
   selector:
     app: fastapi-serving
+{{- if .Values.canary.enabled }}
+---
+# Canary service — Argo Rollouts routes canary traffic here during rollout.
+apiVersion: v1
+kind: Service
+metadata:
+  name: fastapi-serving-canary
+  namespace: {{ .Values.global.namespace }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.serving.port }}
+      targetPort: {{ .Values.serving.port }}
+  selector:
+    app: fastapi-serving
+---
+# AnalysisTemplate: canary PSI comparison.
+# Queries Prometheus for per-model-version PSI and sample count.
+# Passes when canary PSI < production PSI * psiFactor AND canary has
+# enough samples for a statistically meaningful measurement.
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: canary-psi-analysis
+  namespace: {{ .Values.global.namespace }}
+spec:
+  args:
+    - name: canary-model-version
+    - name: production-model-version
+  metrics:
+    # Gate: require minimum sample count before evaluating PSI.
+    - name: canary-sample-count
+      count: {{ add (.Values.canary.analysis.failureLimit | int) 1 }}
+      interval: {{ .Values.canary.analysis.interval }}
+      initialDelay: {{ .Values.canary.analysis.initialDelay }}
+      failureLimit: {{ .Values.canary.analysis.failureLimit }}
+      provider:
+        prometheus:
+          address: http://prometheus.{{ .Values.global.namespace }}.svc.cluster.local:{{ .Values.prometheus.port }}
+          query: |
+            drift_window_version_sample_count{model_version="{{`{{args.canary-model-version}}`}}"}
+      successCondition: result[0] >= {{ .Values.canary.analysis.minSamples }}
+    # Core: compare canary PSI vs production PSI.
+    - name: canary-psi-comparison
+      count: {{ add (.Values.canary.analysis.failureLimit | int) 1 }}
+      interval: {{ .Values.canary.analysis.interval }}
+      initialDelay: {{ .Values.canary.analysis.initialDelay }}
+      failureLimit: {{ .Values.canary.analysis.failureLimit }}
+      provider:
+        prometheus:
+          address: http://prometheus.{{ .Values.global.namespace }}.svc.cluster.local:{{ .Values.prometheus.port }}
+          query: |
+            drift_psi_class_distribution{model_version="{{`{{args.canary-model-version}}`}}"}
+            / on() (drift_psi_class_distribution{model_version="{{`{{args.production-model-version}}`}}"} > 0)
+      # Ratio < psiFactor means canary is drifting less than production.
+      # Absent data (no production PSI or division by zero) returns empty → inconclusive,
+      # not failure. Only a ratio >= psiFactor is a real failure.
+      successCondition: result[0] < {{ .Values.canary.analysis.psiFactor }}
+{{- end }}
 {{- end }}

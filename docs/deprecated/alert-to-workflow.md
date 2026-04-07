@@ -117,8 +117,8 @@ ground-truth labels back. The batch is naturally capped at the number of unannot
 
 ## Setup
 
-This pipeline is fully automated by `make k3d.bootstrap`. If you are setting up from
-scratch, the bootstrap handles everything. This section documents what each step installs
+This pipeline is fully automated by `make k3d.initialize`. If you are setting up from
+scratch, the initialization handles everything. This section documents what each step installs
 in case you need to reproduce or debug individual components.
 
 ### 1. Cluster with correct port mappings
@@ -137,7 +137,7 @@ This includes `--port "2746:30007@server:0"` which forwards `localhost:2746` →
 If the cluster already exists without this port, you must recreate it:
 ```bash
 make k3d.delete
-make k3d.bootstrap
+make k3d.initialize
 ```
 
 ### 2. Install Argo Workflows and Argo Events

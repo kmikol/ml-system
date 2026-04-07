@@ -33,5 +33,5 @@ make k3d.serve.restart
 
 ```bash
 # TODO: add Prometheus query checklist for load/drift validation
-# TODO: add Argo workflow troubleshooting commands for bootstrap failures
+# TODO: add Argo workflow troubleshooting commands for initialization failures
 ```

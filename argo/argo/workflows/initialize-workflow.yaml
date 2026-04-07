@@ -1,8 +1,8 @@
-# k8s/argo/workflows/bootstrap-init.yaml
+# argo/argo/workflows/initialize-workflow.yaml
 #
-# RBAC + WorkflowTemplate: one-time cluster bootstrap pipeline.
+# RBAC + WorkflowTemplate: one-time cluster initialization pipeline.
 #
-# Submitted by `make k3d.bootstrap.workflow` after `k3d.deploy` completes.
+# Submitted by `make k3d.initialize.workflow` after `k3d.deploy` completes.
 # Runs entirely in-cluster so all service addresses are FQDN, not localhost NodePorts.
 #
 # Steps (sequential):
@@ -23,7 +23,7 @@
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: bootstrap-restarter
+  name: initialize-account
   namespace: argo
 
 ---
@@ -32,7 +32,7 @@ metadata:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: bootstrap-deployment-restarter
+  name: initialize-deployment-restarter
 rules:
   - apiGroups: [apps]
     resources: [deployments]
@@ -48,33 +48,33 @@ rules:
     verbs: [list, delete]
 
 ---
-# Bind the ClusterRole to the bootstrap-restarter SA in the argo namespace.
+# Bind the ClusterRole to the initialize-account SA in the argo namespace.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: argo-bootstrap-deployment-restarter
+  name: argo-initialize-deployment-restarter
 subjects:
   - kind: ServiceAccount
-    name: bootstrap-restarter
+    name: initialize-account
     namespace: argo
 roleRef:
   kind: ClusterRole
-  name: bootstrap-deployment-restarter
+  name: initialize-deployment-restarter
   apiGroup: rbac.authorization.k8s.io
 
 ---
-# WorkflowTemplate: bootstrap-init
+# WorkflowTemplate: initialize-workflow
 #
 # Triggered once during k3d.bootstrap via a concrete Workflow resource
-# (see make k3d.bootstrap.workflow).  Safe to re-run — seed is idempotent
+# (see make k3d.initialize.workflow).  Safe to re-run — seed is idempotent
 # (ON CONFLICT DO NOTHING) and MLflow registers a new run each time.
 apiVersion: argoproj.io/v1alpha1
 kind: WorkflowTemplate
 metadata:
-  name: bootstrap-init
+  name: initialize-workflow
   namespace: argo
 spec:
-  serviceAccountName: bootstrap-restarter
+  serviceAccountName: initialize-account
   entrypoint: bootstrap
 
   templates:

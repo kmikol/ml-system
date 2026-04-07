@@ -1,41 +1,41 @@
 # Running
 
-This section covers the system execution path from bootstrap to traffic simulation.
+This section covers the system execution path from initialize to traffic simulation.
 
 ## Minimum Run (Local Setup Only)
 
 If you just want the shortest path to run the system locally for testing:
 
 ```bash
-make bootstrap
+make initialize
 make test.serve
 ```
 
 This path will:
 
-- bootstrap cluster and workloads
+- initialize cluster and workloads
 - run seed/verify/train/restart workflow
 - verify serving endpoint responds locally
 
 ## Bootstrap Cluster and Workflows
 
 ```bash
-make bootstrap
+make initialize
 ```
 
-`make bootstrap` executes the full startup path via `k3d.bootstrap`:
+`make initialize` executes the full startup path via `k3d.initialize`:
 
 - create k3d cluster
 - install KEDA and Argo components
 - build and import images
 - deploy Helm resources
-- run bootstrap workflow (seed -> verify -> train -> restart serving)
+- run initialization workflow (seed -> verify -> train -> restart serving)
 
 ## Important Make Targets
 
 Core targets used most often during local testing:
 
-- `make bootstrap` — full first-time startup path
+- `make initialize` — full first-time startup path
 - `make k3d.status` — current cluster and service state
 - `make test.serve` — smoke test inference endpoint
 - `make test.serve.load` — load test serving

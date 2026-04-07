@@ -149,7 +149,7 @@ k3d.initialize: ## First-time setup: create cluster, install KEDA+Argo+Ingress+R
 	@$(MAKE) --no-print-directory k3d.initialize.workflow
 	@echo ""
 	@echo "$(GREEN)╔══════════════════════════════════════════════════════╗$(RESET)"
-	@echo "$(GREEN)║  Bootstrap complete!                                 ║$(RESET)"
+	@echo "$(GREEN)║  Initialize complete!                                ║$(RESET)"
 	@echo "$(GREEN)╚══════════════════════════════════════════════════════╝$(RESET)"
 	@echo ""
 	@$(MAKE) --no-print-directory k3d.status
@@ -177,10 +177,10 @@ k3d.initialize.workflow: ## Submit initialize-workflow Argo workflow and wait fo
 	done; \
 	PHASE=$$(kubectl get workflow initialize-workflow-run -n argo -o jsonpath='{.status.phase}'); \
 	if [ "$$PHASE" != "Succeeded" ]; then \
-		echo "$(RED)Bootstrap workflow $$PHASE. Check Argo UI: http://localhost:2746$(RESET)"; \
+		echo "$(RED)Initialize workflow $$PHASE. Check Argo UI: http://localhost:2746$(RESET)"; \
 		exit 1; \
 	fi
-	@echo "$(GREEN)Bootstrap workflow succeeded.$(RESET)"
+	@echo "$(GREEN)Initialize workflow succeeded.$(RESET)"
 
 k3d.create: ## Create k3d cluster with port mappings
 	@echo "$(CYAN)Creating k3d cluster '$(K3D_CLUSTER)'...$(RESET)"
@@ -245,8 +245,8 @@ k3d.deploy: ## Deploy (or upgrade) all services with Helm, then apply Argo Event
 		-n $(K8S_NAMESPACE)
 	@echo ""
 	@echo "$(CYAN)Applying Argo Events resources (SSA)...$(RESET)"
-	kubectl apply --server-side --force-conflicts -f k8s/argo/argo-events-resources.yaml
-	kubectl apply --server-side --force-conflicts -f k8s/argo/workflows/
+	kubectl apply --server-side --force-conflicts -f argo/argo/argo-events-resources.yaml
+	kubectl apply --server-side --force-conflicts -f argo/argo/workflows/
 	@echo ""
 	@echo "$(GREEN)Deployed.$(RESET)"
 	@if [ "$(WAIT)" = "1" ]; then \
@@ -533,7 +533,7 @@ data.inspect.training: ## Plot 4x4 grid of random training images with labels
 .PHONY: test test.unit test.integration test.helm test.e2e \
         test.data_controller.unit test.data_controller.integration \
         test.model_artifact_controller.unit test.model_artifact_controller.integration \
-	lint lint.fix format serve.test serve.test.load serve.test.drift test.serve test.serve.load test.serve.drift mlflow.ui minio.ui clean.pyc
+	lint lint.fix format test.serve test.serve.load test.serve.drift mlflow.ui minio.ui clean.pyc
 
 typecheck: ## Run mypy static type checker
 	python -m mypy serving annotation sampling monitoring/ml_exporter shared \

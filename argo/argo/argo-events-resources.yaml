@@ -159,4 +159,4 @@ spec:
               spec:
                 workflowTemplateRef:
                   name: retrain
-# WorkflowTemplates are defined in k8s/argo/workflows/ and applied separately.
+# WorkflowTemplates are defined in argo/argo/workflows/ and applied separately.

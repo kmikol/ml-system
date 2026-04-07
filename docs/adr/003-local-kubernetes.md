@@ -133,5 +133,5 @@ Use a real cloud Kubernetes cluster with free tier benefits.
 
 - k3d clusters are created with `k3d cluster create ml-system --kubeconfig-update-default`
 - Helm deployments via `helm install ml-system helm/ml-system/ -f helm/ml-system/values-local.yaml`
-- All manifests in `k8s/` are standard Kubernetes YAML, no k3d-specific extensions
+- All manifests in `argo/` are standard Kubernetes YAML, no k3d-specific extensions
 - Services communicate via Kubernetes DNS (e.g., `prometheus.ml-system.svc.cluster.local`)

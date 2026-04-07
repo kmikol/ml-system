@@ -1,4 +1,4 @@
-# k8s/argo/workflows/sample-and-label.yaml
+# argo/workflows/sample-and-label.yaml
 #
 # WorkflowTemplate: two-step active learning pipeline triggered by PSI drift alert.
 #

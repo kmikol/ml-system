@@ -4,7 +4,7 @@ from pathlib import Path
 
 
 def _seed_data_section() -> str:
-    workflow = Path("k8s/argo/workflows/bootstrap-init.yaml").read_text(encoding="utf-8")
+    workflow = Path("argo/workflows/initialize-workflow.yaml").read_text(encoding="utf-8")
     start = workflow.index("    - name: seed-data\n      initContainers:")
     end = workflow.index("    # ── Step 2: verify-data")
     return workflow[start:end]

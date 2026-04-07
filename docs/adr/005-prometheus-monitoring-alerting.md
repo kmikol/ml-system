@@ -283,7 +283,7 @@ receivers:
     # HighLatency alerts go to /dev/null (observational only)
 ```
 
-**Argo Events Sensor** ([k8s/argo/argo-events-resources.yaml]()):
+**Argo Events Sensor** ([argo/argo-events-resources.yaml]()):
 
 ```yaml
 apiVersion: argoproj.io/v1alpha1

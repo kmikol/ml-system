@@ -55,10 +55,10 @@ help: ## Show this help
 # KUBERNETES (k3d)
 # ═══════════════════════════════════════════════════════════════
 
-.PHONY: k3d.bootstrap k3d.bootstrap.workflow k3d.create k3d.delete.data k3d.delete.all k3d.build k3d.import k3d.deploy k3d.wait.downstreams k3d.status k3d.logs k3d.shell k3d.redeploy k3d.train k3d.annotate k3d.serve.restart k3d.keda.install k3d.ml-exporter.restart k3d.argo.install k3d.argo-rollouts.install k3d.ingress.install
-.PHONY: bootstrap k3d.bootstrap k3d.bootstrap.workflow k3d.create k3d.delete k3d.build k3d.import k3d.deploy k3d.status k3d.logs k3d.shell k3d.redeploy k3d.train k3d.annotate k3d.serve.restart k3d.keda.install k3d.ml-exporter.restart k3d.argo.install
+.PHONY: k3d.initialize k3d.initialize.workflow k3d.create k3d.delete.data k3d.delete.all k3d.build k3d.import k3d.deploy k3d.wait.downstreams k3d.status k3d.logs k3d.shell k3d.redeploy k3d.train k3d.annotate k3d.serve.restart k3d.keda.install k3d.ml-exporter.restart k3d.argo.install k3d.argo-rollouts.install k3d.ingress.install
+.PHONY: initialize k3d.initialize k3d.initialize.workflow k3d.create k3d.delete k3d.build k3d.import k3d.deploy k3d.status k3d.logs k3d.shell k3d.redeploy k3d.train k3d.annotate k3d.serve.restart k3d.keda.install k3d.ml-exporter.restart k3d.argo.install
 
-bootstrap: k3d.bootstrap ## Convenience alias for full first-time cluster startup
+initialize: k3d.initialize ## Convenience alias for full first-time cluster startup
 
 k3d.keda.install: ## Install KEDA into the cluster (run once after k3d.create)
 	@echo "$(CYAN)Installing KEDA...$(RESET)"
@@ -113,9 +113,9 @@ k3d.argo-rollouts.install: ## Install Argo Rollouts into the cluster (run once a
 		--wait --timeout 120s
 	@echo "$(GREEN)Argo Rollouts installed.$(RESET)"
 
-k3d.bootstrap: ## First-time setup: create cluster, install KEDA+Argo+Ingress+Rollouts, build+import images, deploy, run bootstrap workflow
+k3d.initialize: ## First-time setup: create cluster, install KEDA+Argo+Ingress+Rollouts, build+import images, deploy, run initialize workflow
 	@echo "$(CYAN)╔══════════════════════════════════════════════════════╗$(RESET)"
-	@echo "$(CYAN)║  k3d bootstrap - full first-time startup             ║$(RESET)"
+	@echo "$(CYAN)║  k3d initialize - full first-time startup             ║$(RESET)"
 	@echo "$(CYAN)╚══════════════════════════════════════════════════════╝$(RESET)"
 	@echo ""
 	@echo "$(CYAN)[1/10] Creating k3d cluster...$(RESET)"
@@ -145,42 +145,42 @@ k3d.bootstrap: ## First-time setup: create cluster, install KEDA+Argo+Ingress+Ro
 	@echo "$(CYAN)[9/10] Deploying services with Helm (WAIT=1)...$(RESET)"
 	@$(MAKE) --no-print-directory k3d.deploy WAIT=1
 	@echo ""
-	@echo "$(CYAN)[10/10] Submitting bootstrap-init Argo workflow (seed → verify → train → restart-serving)...$(RESET)"
-	@$(MAKE) --no-print-directory k3d.bootstrap.workflow
+	@echo "$(CYAN)[10/10] Submitting initialize-workflow Argo workflow (seed → verify → train → restart-serving)...$(RESET)"
+	@$(MAKE) --no-print-directory k3d.initialize.workflow
 	@echo ""
 	@echo "$(GREEN)╔══════════════════════════════════════════════════════╗$(RESET)"
-	@echo "$(GREEN)║  Bootstrap complete!                                 ║$(RESET)"
+	@echo "$(GREEN)║  Initialize complete!                                ║$(RESET)"
 	@echo "$(GREEN)╚══════════════════════════════════════════════════════╝$(RESET)"
 	@echo ""
 	@$(MAKE) --no-print-directory k3d.status
 
-k3d.bootstrap.workflow: ## Submit bootstrap-init Argo workflow and wait for completion (seed → verify → train → restart-serving)
-	@echo "$(CYAN)Deleting any previous bootstrap-init-run workflow...$(RESET)"
-	kubectl delete workflow bootstrap-init-run -n argo --ignore-not-found=true
-	@echo "$(CYAN)Submitting bootstrap-init workflow...$(RESET)"
+k3d.initialize.workflow: ## Submit initialize-workflow Argo workflow and wait for completion (seed → verify → train → restart-serving)
+	@echo "$(CYAN)Deleting any previous initialize-workflow-run workflow...$(RESET)"
+	kubectl delete workflow initialize-workflow-run -n argo --ignore-not-found=true
+	@echo "$(CYAN)Submitting initialize-workflow workflow...$(RESET)"
 	printf '%s\n' \
 		'apiVersion: argoproj.io/v1alpha1' \
 		'kind: Workflow' \
 		'metadata:' \
-		'  name: bootstrap-init-run' \
+		'  name: initialize-workflow-run' \
 		'  namespace: argo' \
 		'spec:' \
 		'  workflowTemplateRef:' \
-		'    name: bootstrap-init' \
+		'    name: initialize-workflow' \
 		| kubectl create -f -
 	@echo "$(CYAN)Workflow submitted. Monitor at: http://localhost:2746$(RESET)"
 	@echo "$(CYAN)Waiting for workflow to complete...$(RESET)"
-	@until PHASE=$$(kubectl get workflow bootstrap-init-run -n argo \
+	@until PHASE=$$(kubectl get workflow initialize-workflow-run -n argo \
 		-o jsonpath='{.status.phase}' 2>/dev/null); \
 		[ "$$PHASE" = "Succeeded" ] || [ "$$PHASE" = "Failed" ] || [ "$$PHASE" = "Error" ]; do \
 		echo "  status: $${PHASE:-Pending}..."; sleep 10; \
 	done; \
-	PHASE=$$(kubectl get workflow bootstrap-init-run -n argo -o jsonpath='{.status.phase}'); \
+	PHASE=$$(kubectl get workflow initialize-workflow-run -n argo -o jsonpath='{.status.phase}'); \
 	if [ "$$PHASE" != "Succeeded" ]; then \
-		echo "$(RED)Bootstrap workflow $$PHASE. Check Argo UI: http://localhost:2746$(RESET)"; \
+		echo "$(RED)Initialize workflow $$PHASE. Check Argo UI: http://localhost:2746$(RESET)"; \
 		exit 1; \
 	fi
-	@echo "$(GREEN)Bootstrap workflow succeeded.$(RESET)"
+	@echo "$(GREEN)Initialize workflow succeeded.$(RESET)"
 
 k3d.create: ## Create k3d cluster with port mappings
 	@echo "$(CYAN)Creating k3d cluster '$(K3D_CLUSTER)'...$(RESET)"
@@ -203,7 +203,7 @@ k3d.create: ## Create k3d cluster with port mappings
 	@echo "$(GREEN)Cluster ready.$(RESET)"
 	@echo ""
 	@echo "  First-time setup: make k3d.keda.install && make k3d.argo.install && make k3d.ingress.install && make k3d.build && make k3d.import && make k3d.deploy"
-	@echo "  Or run everything at once: make k3d.bootstrap"
+	@echo "  Or run everything at once: make k3d.initialize"
 
 
 k3d.delete.data: ## Purge runtime data (Postgres/MLflow/MinIO/lakeFS PVC+PV) but keep the k3d cluster
@@ -245,8 +245,8 @@ k3d.deploy: ## Deploy (or upgrade) all services with Helm, then apply Argo Event
 		-n $(K8S_NAMESPACE)
 	@echo ""
 	@echo "$(CYAN)Applying Argo Events resources (SSA)...$(RESET)"
-	kubectl apply --server-side --force-conflicts -f k8s/argo/argo-events-resources.yaml
-	kubectl apply --server-side --force-conflicts -f k8s/argo/workflows/
+	kubectl apply --server-side --force-conflicts -f argo/argo-events-resources.yaml
+	kubectl apply --server-side --force-conflicts -f argo/workflows/
 	@echo ""
 	@echo "$(GREEN)Deployed.$(RESET)"
 	@if [ "$(WAIT)" = "1" ]; then \
@@ -533,7 +533,7 @@ data.inspect.training: ## Plot 4x4 grid of random training images with labels
 .PHONY: test test.unit test.integration test.helm test.e2e \
         test.data_controller.unit test.data_controller.integration \
         test.model_artifact_controller.unit test.model_artifact_controller.integration \
-	lint lint.fix format serve.test serve.test.load serve.test.drift test.serve test.serve.load test.serve.drift mlflow.ui minio.ui clean.pyc
+	lint lint.fix format test.serve test.serve.load test.serve.drift mlflow.ui minio.ui clean.pyc
 
 typecheck: ## Run mypy static type checker
 	python -m mypy serving annotation sampling monitoring/ml_exporter shared \

@@ -231,7 +231,7 @@ class ModelManager:
 **Model Promotion (Retrain Workflow)**, step-by-step:
 
 ```yaml
-# retrain-workflow (k8s/argo/workflows/retrain.yaml)
+# retrain-workflow (argo/workflows/retrain.yaml)
 
 # Step 3: Assign Canary alias to new model
 - name: set-canary-alias

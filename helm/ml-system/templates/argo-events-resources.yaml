@@ -1,6 +1,6 @@
 # RBAC for Argo Events Sensor to submit Workflows cross-namespace (ml-system → argo).
 # CRD instances (EventBus, EventSource, Sensor, WorkflowTemplate) live in
-# k8s/argo/argo-events-resources.yaml and are applied via kubectl SSA in k3d.deploy.
+# argo/argo-events-resources.yaml and are applied via kubectl SSA in k3d.deploy.
 apiVersion: v1
 kind: ServiceAccount
 metadata:

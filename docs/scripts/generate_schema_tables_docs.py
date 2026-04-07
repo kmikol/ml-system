@@ -26,9 +26,12 @@ def _unparse(node: ast.AST | None) -> str:
 
 def _field_description_from_call(call: ast.Call) -> str:
     for kw in call.keywords:
-        if kw.arg == "description" and isinstance(kw.value, ast.Constant):
-            if isinstance(kw.value.value, str):
-                return kw.value.value
+        if (
+            kw.arg == "description"
+            and isinstance(kw.value, ast.Constant)
+            and isinstance(kw.value.value, str)
+        ):
+            return kw.value.value
     return ""
 
 
@@ -103,7 +106,11 @@ def _extract_constants(path: Path) -> list[tuple[str, str, str]]:
     }
 
     for node in tree.body:
-        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+        if (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+        ):
             name = node.targets[0].id
             if not name.isupper():
                 continue

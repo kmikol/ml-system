@@ -17,7 +17,7 @@ This path will:
 - run seed/verify/train/restart workflow
 - verify serving endpoint responds locally
 
-## Bootstrap Cluster and Workflows
+## Initialize Cluster and Workflows
 
 ```bash
 make initialize

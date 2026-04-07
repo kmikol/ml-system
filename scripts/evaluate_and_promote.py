@@ -183,7 +183,7 @@ def _main() -> int:
 
     # Determine target stage. During canary rollouts the retrain workflow sets
     # PROMOTE_STAGE=Canary so the model is validated progressively before
-    # becoming Production.  Bootstrap (first deploy) uses the default Production.
+    # becoming Production.  Initialize (first deploy) uses the default Production.
     target_stage = ModelStage(os.environ.get("PROMOTE_STAGE", "Production"))
 
     try:

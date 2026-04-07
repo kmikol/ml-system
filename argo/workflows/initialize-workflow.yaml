@@ -1,4 +1,4 @@
-# argo/argo/workflows/initialize-workflow.yaml
+# argo/workflows/initialize-workflow.yaml
 #
 # RBAC + WorkflowTemplate: one-time cluster initialization pipeline.
 #

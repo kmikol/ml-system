@@ -245,8 +245,8 @@ k3d.deploy: ## Deploy (or upgrade) all services with Helm, then apply Argo Event
 		-n $(K8S_NAMESPACE)
 	@echo ""
 	@echo "$(CYAN)Applying Argo Events resources (SSA)...$(RESET)"
-	kubectl apply --server-side --force-conflicts -f argo/argo/argo-events-resources.yaml
-	kubectl apply --server-side --force-conflicts -f argo/argo/workflows/
+	kubectl apply --server-side --force-conflicts -f argo/argo-events-resources.yaml
+	kubectl apply --server-side --force-conflicts -f argo/workflows/
 	@echo ""
 	@echo "$(GREEN)Deployed.$(RESET)"
 	@if [ "$(WAIT)" = "1" ]; then \

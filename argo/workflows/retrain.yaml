@@ -1,4 +1,4 @@
-# argo/argo/workflows/retrain.yaml
+# argo/workflows/retrain.yaml
 #
 # RBAC + WorkflowTemplate: model retraining pipeline with canary rollout.
 #

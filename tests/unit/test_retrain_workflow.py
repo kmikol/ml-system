@@ -4,7 +4,7 @@ from pathlib import Path
 
 
 def _workflow_text() -> str:
-    return Path("argo/argo/workflows/retrain.yaml").read_text(encoding="utf-8")
+    return Path("argo/workflows/retrain.yaml").read_text(encoding="utf-8")
 
 
 def test_retrain_uses_secret_refs_for_lakefs_credentials() -> None:

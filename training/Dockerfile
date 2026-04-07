@@ -13,8 +13,8 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 	pip install --no-cache-dir --extra-index-url https://pypi.org/simple -r requirements.txt
 COPY shared/ shared/
 COPY training/ training/
-# Bootstrap data: baked in after `make data.prepare` (same pattern as annotation image).
-# Required for the bootstrap-init Argo workflow (seed-data + verify-data steps).
+# Initialization data: baked in after `make data.prepare` (same pattern as annotation image).
+# Required for the initialize-workflow Argo workflow (seed-data + verify-data steps).
 COPY scripts/ scripts/
 COPY data/v0/ data/v0/
 CMD ["python", "-m", "training.main"]

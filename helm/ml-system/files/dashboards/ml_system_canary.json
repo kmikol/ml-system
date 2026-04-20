@@ -1,0 +1,724 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "enable": true,
+        "expr": "ALERTS{alertname=\"PsiThresholdBreached\", alertstate=\"firing\"}",
+        "hide": false,
+        "iconColor": "orange",
+        "name": "PSI Alert",
+        "step": "60s",
+        "titleFormat": "PSI Alert",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "liveNow": false,
+  "panels": [
+
+    {
+      "collapsed": false,
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 1 },
+      "id": 100,
+      "title": "Rollout Status",
+      "type": "row"
+    },
+
+    {
+      "id": 1,
+      "title": "Production Traffic Share",
+      "description": "Fraction of total /predict completions served by the Production pod(s). Should remain close to 1.0 before canary weight is increased.",
+      "type": "stat",
+      "gridPos": { "x": 0, "y": 1, "w": 6, "h": 4 },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "blue", "value": null }]
+          },
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "noValue": "—"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate(http_requests_total{handler=\"/predict\", model_stage=\"Production\"}[1m]))\n/ sum(rate(http_requests_total{handler=\"/predict\"}[1m]))",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ]
+    },
+
+    {
+      "id": 2,
+      "title": "Canary Traffic Share",
+      "description": "Fraction of total /predict completions served by the Canary pod(s). Rises as the rollout advances.",
+      "type": "stat",
+      "gridPos": { "x": 6, "y": 1, "w": 6, "h": 4 },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "blue", "value": null }]
+          },
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "noValue": "—"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate(http_requests_total{handler=\"/predict\", model_stage=\"Canary\"}[1m]))\n/ sum(rate(http_requests_total{handler=\"/predict\"}[1m]))",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ]
+    },
+
+    {
+      "id": 3,
+      "title": "Production Pods",
+      "type": "stat",
+      "gridPos": { "x": 12, "y": 1, "w": 6, "h": 4 },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }]
+          },
+          "unit": "short",
+          "noValue": "0"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "count(predict_arrivals_total{model_stage=\"Production\"})",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ]
+    },
+
+    {
+      "id": 4,
+      "title": "Canary Pods",
+      "type": "stat",
+      "gridPos": { "x": 18, "y": 1, "w": 6, "h": 4 },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "orange", "value": null }]
+          },
+          "unit": "short",
+          "noValue": "0"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "count(predict_arrivals_total{model_stage=\"Canary\"})",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ]
+    },
+
+    {
+      "collapsed": false,
+      "gridPos": { "x": 0, "y": 5, "w": 24, "h": 1 },
+      "id": 101,
+      "title": "Serving — Production vs Canary",
+      "type": "row"
+    },
+
+    {
+      "id": 10,
+      "title": "Request Rate by Stage",
+      "description": "Completion rate per stage. Use this to confirm the traffic split matches the configured canary weight.",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 6, "w": 8, "h": 8 },
+      "options": {
+        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "lineInterpolation": "linear",
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate(http_requests_total{handler=\"/predict\", model_stage=\"Production\"}[1m]))",
+          "legendFormat": "Production",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate(http_requests_total{handler=\"/predict\", model_stage=\"Canary\"}[1m]))",
+          "legendFormat": "Canary",
+          "refId": "B"
+        }
+      ]
+    },
+
+    {
+      "id": 11,
+      "title": "p95 Latency by Stage",
+      "description": "95th-percentile latency per stage. A canary regression here is a common rollback trigger.",
+      "type": "timeseries",
+      "gridPos": { "x": 8, "y": 6, "w": 8, "h": 8 },
+      "options": {
+        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "lineInterpolation": "linear",
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "unit": "s",
+          "max": 5
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{handler=\"/predict\", model_stage=\"Production\"}[1m])))",
+          "legendFormat": "Production p95",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{handler=\"/predict\", model_stage=\"Canary\"}[1m])))",
+          "legendFormat": "Canary p95",
+          "refId": "B"
+        }
+      ]
+    },
+
+    {
+      "id": 12,
+      "title": "Error Rate by Stage",
+      "description": "5xx rate per stage. Any canary error rate above zero while production stays at zero is a rollback signal.",
+      "type": "timeseries",
+      "gridPos": { "x": 16, "y": 6, "w": 8, "h": 8 },
+      "options": {
+        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 15,
+            "lineInterpolation": "linear",
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "line" }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 0.01 }
+            ]
+          },
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "noValue": "0%"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate(http_requests_total{handler=\"/predict\", model_stage=\"Production\", status=\"5xx\"}[1m]))\n/ sum(rate(http_requests_total{handler=\"/predict\", model_stage=\"Production\"}[1m]))",
+          "legendFormat": "Production",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate(http_requests_total{handler=\"/predict\", model_stage=\"Canary\", status=\"5xx\"}[1m]))\n/ sum(rate(http_requests_total{handler=\"/predict\", model_stage=\"Canary\"}[1m]))",
+          "legendFormat": "Canary",
+          "refId": "B"
+        }
+      ]
+    },
+
+    {
+      "collapsed": false,
+      "gridPos": { "x": 0, "y": 14, "w": 24, "h": 1 },
+      "id": 102,
+      "title": "Model Behavior — Production vs Canary",
+      "type": "row"
+    },
+
+    {
+      "id": 20,
+      "title": "PSI by Stage",
+      "description": "Population Stability Index per stage. If canary PSI diverges from production PSI on the same traffic window it indicates sampling bias rather than real drift. If both rise together, the input distribution is genuinely shifting.",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 15, "w": 12, "h": 8 },
+      "options": {
+        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "lineInterpolation": "linear",
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "line+area" }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.1 },
+              { "color": "red", "value": 0.25 }
+            ]
+          },
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "(drift_psi_class_distribution{model_stage=\"Production\"} >= 0) and on(model_version) (max_over_time(drift_window_version_sample_count{model_stage=\"Production\"}[5m]) > 0)",
+          "legendFormat": "Production PSI",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "(drift_psi_class_distribution{model_stage=\"Canary\"} >= 0) and on(model_version) (max_over_time(drift_window_version_sample_count{model_stage=\"Canary\"}[5m]) > 0)",
+          "legendFormat": "Canary PSI",
+          "refId": "B"
+        }
+      ]
+    },
+
+    {
+      "id": 21,
+      "title": "PSI Delta (Canary \u2212 Production)",
+      "description": "Difference in PSI between canary and production. Near zero means both stages see identical input distributions — the traffic split is unbiased. A large positive value means the canary is receiving systematically different inputs.",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 15, "w": 12, "h": 8 },
+      "options": {
+        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "lineInterpolation": "linear",
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "line+area" }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.05 },
+              { "color": "red", "value": 0.15 }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "(drift_psi_class_distribution{model_stage=\"Canary\"} >= 0)\n-\n(drift_psi_class_distribution{model_stage=\"Production\"} >= 0)",
+          "legendFormat": "\u0394 PSI (Canary \u2212 Production)",
+          "refId": "A"
+        }
+      ]
+    },
+
+    {
+      "id": 22,
+      "title": "Prediction Class Distribution by Stage",
+      "description": "Normalised per-class prediction rate for each stage. Canary producing a meaningfully different output distribution on the same inputs is a model behavior change — whether it is desirable depends on the expected class mix.",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 23, "w": 12, "h": 8 },
+      "options": {
+        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 40,
+            "lineInterpolation": "linear",
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "normal" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (class_label) (rate(prediction_class_total{model_stage=\"Production\"}[1m]))",
+          "legendFormat": "prod: class {{class_label}}",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (class_label) (rate(prediction_class_total{model_stage=\"Canary\"}[1m]))",
+          "legendFormat": "canary: class {{class_label}}",
+          "refId": "B"
+        }
+      ]
+    },
+
+    {
+      "id": 23,
+      "title": "Mean Confidence by Stage",
+      "description": "Mean prediction confidence per stage from the drift window. A sustained drop in canary confidence indicates the new model is less certain on live traffic than on its training set.",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 23, "w": 12, "h": 8 },
+      "options": {
+        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "lineInterpolation": "linear",
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(prediction_confidence_score_bucket{model_stage=\"Production\"}[1m])))",
+          "legendFormat": "Production p50",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(prediction_confidence_score_bucket{model_stage=\"Canary\"}[1m])))",
+          "legendFormat": "Canary p50",
+          "refId": "B"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.10, sum by (le) (rate(prediction_confidence_score_bucket{model_stage=\"Canary\"}[1m])))",
+          "legendFormat": "Canary p10",
+          "refId": "C"
+        }
+      ]
+    },
+
+    {
+      "id": 24,
+      "title": "Mahalanobis Score by Stage",
+      "description": "Squared Mahalanobis distance from predicted-class Gaussian. Rising canary p90/p99 while production stays flat means the canary model is seeing inputs it considers out-of-distribution.",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 31, "w": 12, "h": 8 },
+      "options": {
+        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "lineInterpolation": "linear",
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.90, sum by (le) (rate(prediction_mahalanobis_score_bucket{model_stage=\"Production\"}[1m])))",
+          "legendFormat": "Production p90",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.90, sum by (le) (rate(prediction_mahalanobis_score_bucket{model_stage=\"Canary\"}[1m])))",
+          "legendFormat": "Canary p90",
+          "refId": "B"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(prediction_mahalanobis_score_bucket{model_stage=\"Canary\"}[1m])))",
+          "legendFormat": "Canary p99",
+          "refId": "C"
+        }
+      ]
+    },
+
+    {
+      "id": 25,
+      "title": "Drift Window Sample Count by Stage",
+      "description": "Number of predictions in the current drift window per stage. PSI is only meaningful once a stage exceeds 30 samples — use this to judge when PSI readings become reliable.",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 31, "w": 12, "h": 8 },
+      "options": {
+        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "lineInterpolation": "linear",
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "line" }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 30 }
+            ]
+          },
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "drift_window_version_sample_count{model_stage=\"Production\"}",
+          "legendFormat": "Production",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "drift_window_version_sample_count{model_stage=\"Canary\"}",
+          "legendFormat": "Canary",
+          "refId": "B"
+        }
+      ]
+    },
+
+    {
+      "collapsed": false,
+      "gridPos": { "x": 0, "y": 39, "w": 24, "h": 1 },
+      "id": 103,
+      "title": "Pipeline State",
+      "type": "row"
+    },
+
+    {
+      "id": 30,
+      "title": "Annotated Queue",
+      "description": "Predictions annotated but not yet in a training dataset. A growing queue during canary evaluation means the canary is generating low-confidence predictions that are being flagged for review.",
+      "type": "stat",
+      "gridPos": { "x": 0, "y": 40, "w": 6, "h": 4 },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 50 },
+              { "color": "red", "value": 200 }
+            ]
+          },
+          "unit": "short",
+          "noValue": "0"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "annotation_annotated_count",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ]
+    },
+
+    {
+      "id": 31,
+      "title": "Retraining Pipeline",
+      "description": "Argo Workflows activity. A failed workflow during a canary evaluation may indicate the pipeline was triggered by canary-induced drift.",
+      "type": "timeseries",
+      "gridPos": { "x": 6, "y": 40, "w": 18, "h": 4 },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "right", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 20,
+            "lineInterpolation": "stepAfter",
+            "spanNulls": false,
+            "insertNulls": false
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "argo_workflows_count{namespace=\"argo\", phase=\"Running\"}",
+          "legendFormat": "Running",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "argo_workflows_count{namespace=\"argo\", phase=\"Failed\"}",
+          "legendFormat": "Failed",
+          "refId": "B"
+        }
+      ]
+    }
+
+  ],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "tags": ["canary"],
+  "time": { "from": "now-30m", "to": "now" },
+  "timepicker": {},
+  "timezone": "",
+  "title": "ML System \u2014 Canary Rollout",
+  "uid": "ml-system-canary",
+  "version": 1,
+  "weekStart": ""
+}

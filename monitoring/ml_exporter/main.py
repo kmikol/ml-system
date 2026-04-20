@@ -35,7 +35,7 @@ from prometheus_client import (
 
 from shared.config import require_env
 from shared.data_controller.drift import DriftDataController
-from shared.model_artifact_controller import ModelStore
+from shared.model_artifact_controller import ModelStage, ModelStore
 from shared.schemas.predict_record import PredictRecord
 
 logging.basicConfig(level=logging.INFO)
@@ -116,11 +116,16 @@ class VersionPsiResult:
         psi: PSI value, or ``None`` when the reference is unavailable or the
             version sub-window has fewer than ``_MIN_SAMPLES`` predictions.
         n: Number of predictions for this version in the current window.
+        model_stage: Deployment stage resolved from the model registry
+            (e.g. ``"Production"``, ``"Canary"``).  Defaults to ``"unknown"``
+            when the registry is unreachable or the version is not currently
+            assigned to any stage.
     """
 
     version: str
     psi: float | None
     n: int
+    model_stage: str = "unknown"
 
 
 def compute_psi(actual: list[float], reference: list[float]) -> float:
@@ -209,7 +214,9 @@ class PrometheusEmitter:
 
     def __init__(self) -> None:
         self._registry = CollectorRegistry()
-        self._tracked_versions: set[str] = set()
+        # Tracks (model_version, model_stage) pairs currently emitted so stale
+        # label combinations can be removed when a version drops out of the window.
+        self._tracked_label_sets: set[tuple[str, str]] = set()
         self._sample_count = Gauge(
             "drift_window_sample_count",
             "Predictions in current window",
@@ -236,13 +243,13 @@ class PrometheusEmitter:
             "drift_psi_class_distribution",
             "PSI of prediction class distribution vs. reference per model version"
             " (-1 = insufficient samples)",
-            ["model_version"],
+            ["model_version", "model_stage"],
             registry=self._registry,
         )
         self._version_sample_count = Gauge(
             "drift_window_version_sample_count",
             "Predictions in current window for a specific model version",
-            ["model_version"],
+            ["model_version", "model_stage"],
             registry=self._registry,
         )
         self._poll_age = Gauge(
@@ -276,17 +283,19 @@ class PrometheusEmitter:
             self._class_freq.labels(class_label=str(c)).set(metrics.class_freqs.get(c, 0.0))
         self._confidence_mean.set(metrics.confidence_mean)
 
-        current_versions = {vr.version for vr in version_psi_results}
-        # Remove stale model_version label series that are no longer emitted.
-        for version in self._tracked_versions - current_versions:
-            self._psi.remove(version)
-            self._version_sample_count.remove(version)
+        current_label_sets = {(vr.version, vr.model_stage) for vr in version_psi_results}
+        # Remove stale (model_version, model_stage) label combinations no longer emitted.
+        for version, stage in self._tracked_label_sets - current_label_sets:
+            self._psi.remove(version, stage)
+            self._version_sample_count.remove(version, stage)
 
         for vr in version_psi_results:
             psi_value = vr.psi if vr.psi is not None else _PSI_SENTINEL
-            self._psi.labels(model_version=vr.version).set(psi_value)
-            self._version_sample_count.labels(model_version=vr.version).set(vr.n)
-        self._tracked_versions = current_versions
+            self._psi.labels(model_version=vr.version, model_stage=vr.model_stage).set(psi_value)
+            self._version_sample_count.labels(
+                model_version=vr.version, model_stage=vr.model_stage
+            ).set(vr.n)
+        self._tracked_label_sets = current_label_sets
         self._annotated_count.set(annotated_count)
 
     def update_poll_age(self, age: float) -> None:
@@ -414,20 +423,27 @@ class DriftPoller:
         # retention TTL is 0. TTL retention only controls absent versions.
         retained_versions = set(version_groups) | self._retained_versions(now)
 
+        # Resolve version → stage once per poll so each VersionPsiResult carries
+        # the correct model_stage label for Prometheus.
+        stage_map = self._resolve_stages()
+
         # Compute per-version PSI. Versions retained by TTL but absent from the
         # current window emit the sentinel to make staleness explicit.
         version_psi_results: list[VersionPsiResult] = []
         for version in sorted(retained_versions):
             vrecords = version_groups.get(version, [])
+            stage = stage_map.get(version, "unknown")
             if not vrecords:
-                version_psi_results.append(VersionPsiResult(version=version, psi=None, n=0))
+                version_psi_results.append(
+                    VersionPsiResult(version=version, psi=None, n=0, model_stage=stage)
+                )
                 logger.info(f"Version {version}: absent from current window, PSI set to sentinel.")
                 continue
 
             ref = self._get_reference(version)
             vmetrics = compute_window_metrics(vrecords, ref)
             version_psi_results.append(
-                VersionPsiResult(version=version, psi=vmetrics.psi, n=vmetrics.n)
+                VersionPsiResult(version=version, psi=vmetrics.psi, n=vmetrics.n, model_stage=stage)
             )
             if vmetrics.psi is None:
                 if ref is None:
@@ -454,6 +470,28 @@ class DriftPoller:
             self._last_poll_ts = time.time()
 
     # ── Private helpers ────────────────────────────────────────────────────────
+
+    def _resolve_stages(self) -> dict[str, str]:
+        """Query the model registry to build a version_id → stage_name mapping.
+
+        Iterates over all known ``ModelStage`` values and calls
+        ``get_current_version_id`` for each.  Failures per stage are logged
+        and skipped so a single unreachable stage does not block the others.
+
+        Returns:
+            Dictionary mapping version identifier strings to their stage name
+            (e.g. ``{"run-abc": "Production", "run-xyz": "Canary"}``).  Versions
+            not assigned to any stage are absent from the returned mapping and
+            will fall back to ``"unknown"`` in ``VersionPsiResult``.
+        """
+        stage_map: dict[str, str] = {}
+        for stage in ModelStage:
+            try:
+                version_id = self._store.get_current_version_id(stage)
+                stage_map[version_id] = stage.value
+            except Exception as e:
+                logger.warning(f"Stage resolution failed for {stage.value}: {e}")
+        return stage_map
 
     def _get_reference(self, version: str) -> list[float] | None:
         """Return cached reference class frequencies for *version*, fetching if needed.

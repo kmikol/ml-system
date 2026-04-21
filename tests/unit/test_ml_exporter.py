@@ -704,7 +704,9 @@ class TestPrometheusEmitterLabels:
         emitter.emit(
             metrics,
             annotated_count=0,
-            version_psi_results=[VersionPsiResult(version="v1", psi=0.1, n=30, model_stage="Production")],
+            version_psi_results=[
+                VersionPsiResult(version="v1", psi=0.1, n=30, model_stage="Production")
+            ],
         )
         emitter.emit(metrics, annotated_count=0, version_psi_results=[])
 

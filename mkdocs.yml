@@ -1,0 +1,95 @@
+site_name: MLOps System
+site_description: End-to-end MLOps platform for MNIST classification — training, serving, drift detection, and active learning.
+repo_url: https://github.com/kmikol/ml-system
+repo_name: kmikol/ml-system
+site_url: https://kmikol.github.io/ml-system/
+
+docs_dir: .
+site_dir: ../site
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [".."]
+          options:
+            show_source: true
+            show_root_heading: true
+            heading_level: 2
+            docstring_section_style: list
+
+markdown_extensions:
+  - def_list
+  - pymdownx.snippets:
+      base_path:
+        - .
+        - ..
+      check_paths: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+
+extra_javascript:
+  - https://unpkg.com/mermaid@10/dist/mermaid.min.js
+  - javascripts/mermaid-init.js
+
+extra_css:
+  - stylesheets/architecture.css
+
+validation:
+  nav:
+    omitted_files: ignore
+
+nav:
+  - System Info:
+    - Overview: architecture/index.md
+    - C4 Level 1: architecture/c4-level-1.md
+    - C4 Level 2: architecture/c4-level-2.md
+  - Getting Started:
+    - Setup: getting-started/setup.md
+    - Running: getting-started/running.md
+    - Useful Commands: getting-started/useful-commands.md
+  - Schemas:
+    - Schemas Index: schemas/index.md
+    - API Schemas: schemas/api.md
+    - Event and Record Schemas: schemas/records.md
+  - ADRs:
+    - ADR Index: adr/index.md
+    - 001 Event-Driven Retraining: adr/001-event-driven-retraining.md
+    - 002 Canary Rollouts: adr/002-canary-rollouts.md
+    - 003 Local Kubernetes: adr/003-local-kubernetes.md
+    - 004 MLflow Artifact Storage: adr/004-mlflow-artifact-storage.md
+    - 005 Prometheus Monitoring & Alerting: adr/005-prometheus-monitoring-alerting.md
+    - 006 KEDA Autoscaling: adr/006-keda-autoscaling.md
+    - 007 Model Artifact Controller Abstraction: adr/007-model-artifact-controller-abstraction.md
+    - 008 ONNX Model Export: adr/008-onnx-model-export.md
+  - Modules:
+    - Modules Index: modules/index.md
+    - Annotation: modules/annotation.md
+    - Data Controller: modules/data_controller.md
+    - Model Artifact Controller: modules/model_artifact_controller.md
+    - Sampling: modules/sampling.md
+    - Serving: modules/serving.md
+    - Training: modules/training.md

@@ -1,0 +1,31 @@
+.arch-diagram {
+  width: 100%;
+}
+
+.arch-diagram img {
+  width: 100%;
+  height: auto;
+}
+
+.arch-diagram-level1 {
+  width: 50%;
+  margin: 0 auto;
+}
+
+.arch-diagram-light {
+  display: block;
+}
+
+.arch-diagram-dark {
+  display: none;
+}
+
+body[data-md-color-scheme="slate"] .arch-diagram-light,
+[data-md-color-scheme="slate"] .arch-diagram-light {
+  display: none;
+}
+
+body[data-md-color-scheme="slate"] .arch-diagram-dark,
+[data-md-color-scheme="slate"] .arch-diagram-dark {
+  display: block;
+}

@@ -2,7 +2,7 @@
 
 ## About This System
 
-This is a **learning project** designed to demonstrate production-grade MLOps architecture patterns and best practices. Built as a complete, runnable system (not a toy example), it implements an end-to-end machine learning pipeline with:
+This is a project designed to demonstrate production-grade MLOps architecture patterns and best practices. Built as a complete, runnable system (not a toy example), it implements an end-to-end machine learning pipeline with:
 
 **[View on GitHub](https://github.com/kmikol/ml-system)** | **[Open Issues](https://github.com/kmikol/ml-system/issues)**
 
@@ -42,6 +42,20 @@ The architecture follows three core principles that guide decisions throughout t
 **Why:** Canary rollouts reduce deployment risk. A bad model reaches only a fraction of users initially. Automated analysis prevents promotion of models that introduce drift.
 
 **Related Decisions:** [ADR 002 — Canary Rollouts](../adr/002-canary-rollouts.md) and [ADR 006 — KEDA Autoscaling](../adr/006-keda-autoscaling.md)
+
+---
+
+## Runtime Snapshots
+
+The system is intended to be inspected while it runs, not only understood from static diagrams.
+
+![Production load test dashboard showing request volume, error rate, active pods, latency percentiles, PSI, and class-frequency drift](../fig/ml-system-production%20load%20test.png)
+
+**Principle 1 under load.** During a load test, all three subsystems have to cooperate simultaneously — serving handles incoming requests, autoscaling reacts to demand, and observability surfaces signals from both. This view validates that each is operating independently and correctly.
+
+![Canary rollout dashboard showing traffic split, production and canary pod counts, request rate, latency, PSI, and confidence by stage](../fig/ml-system-canary%20rollout.png)
+
+**Principle 3 in action.** The stable and candidate models run side by side, with Argo Rollouts shifting traffic between them while automated drift analysis decides whether to promote. The rollout state is made explicit — traffic share, pod counts, latency, PSI, and confidence — so the promotion decision is observable and auditable rather than implicit.
 
 ---
 

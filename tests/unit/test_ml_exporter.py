@@ -74,11 +74,22 @@ class FakeModelStore:
         self,
         reference: ReferenceDistribution | None = None,
         fail_download: bool = False,
+        stage_versions: dict[str, str] | None = None,
     ) -> None:
         self.reference = reference or _make_reference()
         self.fail_download = fail_download
         # Track how many times each version was fetched.
         self.fetch_counts: dict[str, int] = {}
+        # Maps stage.value → version_id for stage resolution (e.g. {"Production": "v1"}).
+        # When empty, get_current_version_id raises, and DriftPoller falls back to "unknown".
+        self._stage_versions: dict[str, str] = stage_versions or {}
+
+    def get_current_version_id(self, stage: Any) -> str:
+        """Simulate ModelStore.get_current_version_id()."""
+        stage_name = stage.value if hasattr(stage, "value") else str(stage)
+        if stage_name in self._stage_versions:
+            return self._stage_versions[stage_name]
+        raise Exception(f"No version registered for stage {stage_name}")
 
     def get_version_artifacts(
         self,
@@ -596,8 +607,8 @@ class TestReferenceCache:
 
 
 class TestPrometheusEmitterLabels:
-    def test_psi_metric_includes_model_version_label(self):
-        """The drift_psi_class_distribution metric must carry a model_version label."""
+    def test_psi_metric_includes_model_version_and_stage_labels(self):
+        """drift_psi_class_distribution must carry both model_version and model_stage labels."""
         from monitoring.ml_exporter.main import PrometheusEmitter
 
         emitter = PrometheusEmitter()
@@ -608,14 +619,15 @@ class TestPrometheusEmitterLabels:
             confidence_mean=0.9,
             psi=None,
         )
-        vpr = [VersionPsiResult(version="run-abc", psi=0.05, n=30)]
+        vpr = [VersionPsiResult(version="run-abc", psi=0.05, n=30, model_stage="Production")]
         emitter.emit(metrics, annotated_count=0, version_psi_results=vpr)
 
         output = emitter.generate_metrics()[0].decode()
-        assert 'drift_psi_class_distribution{model_version="run-abc"}' in output
+        assert 'model_version="run-abc"' in output
+        assert 'model_stage="Production"' in output
 
-    def test_version_sample_count_metric_includes_model_version_label(self):
-        """drift_window_version_sample_count must carry a model_version label."""
+    def test_version_sample_count_metric_includes_model_version_and_stage_labels(self):
+        """drift_window_version_sample_count must carry both model_version and model_stage labels."""
         from monitoring.ml_exporter.main import PrometheusEmitter
 
         emitter = PrometheusEmitter()
@@ -626,11 +638,13 @@ class TestPrometheusEmitterLabels:
             confidence_mean=0.9,
             psi=None,
         )
-        vpr = [VersionPsiResult(version="run-abc", psi=0.05, n=30)]
+        vpr = [VersionPsiResult(version="run-abc", psi=0.05, n=30, model_stage="Production")]
         emitter.emit(metrics, annotated_count=0, version_psi_results=vpr)
 
         output = emitter.generate_metrics()[0].decode()
-        assert 'drift_window_version_sample_count{model_version="run-abc"}' in output
+        assert b"drift_window_version_sample_count" in output.encode()
+        assert 'model_version="run-abc"' in output
+        assert 'model_stage="Production"' in output
 
     def test_multiple_versions_each_get_own_psi_label(self):
         """Each version in version_psi_results must produce a separate labeled series."""
@@ -645,14 +659,16 @@ class TestPrometheusEmitterLabels:
             psi=None,
         )
         vpr = [
-            VersionPsiResult(version="v1", psi=0.05, n=30),
-            VersionPsiResult(version="v2", psi=0.30, n=30),
+            VersionPsiResult(version="v1", psi=0.05, n=30, model_stage="Production"),
+            VersionPsiResult(version="v2", psi=0.30, n=30, model_stage="Canary"),
         ]
         emitter.emit(metrics, annotated_count=0, version_psi_results=vpr)
 
         output = emitter.generate_metrics()[0].decode()
-        assert 'drift_psi_class_distribution{model_version="v1"}' in output
-        assert 'drift_psi_class_distribution{model_version="v2"}' in output
+        assert 'model_version="v1"' in output
+        assert 'model_stage="Production"' in output
+        assert 'model_version="v2"' in output
+        assert 'model_stage="Canary"' in output
 
     def test_sentinel_emitted_for_none_psi(self):
         """VersionPsiResult with psi=None should emit the sentinel value -1."""
@@ -666,11 +682,12 @@ class TestPrometheusEmitterLabels:
             confidence_mean=0.0,
             psi=None,
         )
-        vpr = [VersionPsiResult(version="v1", psi=None, n=5)]
+        vpr = [VersionPsiResult(version="v1", psi=None, n=5, model_stage="Production")]
         emitter.emit(metrics, annotated_count=0, version_psi_results=vpr)
 
         output = emitter.generate_metrics()[0].decode()
-        assert f'drift_psi_class_distribution{{model_version="v1"}} {_PSI_SENTINEL}' in output
+        assert str(_PSI_SENTINEL) in output
+        assert 'model_version="v1"' in output
 
     def test_stale_model_version_labels_are_removed_when_not_emitted(self):
         from monitoring.ml_exporter.main import PrometheusEmitter
@@ -687,10 +704,80 @@ class TestPrometheusEmitterLabels:
         emitter.emit(
             metrics,
             annotated_count=0,
-            version_psi_results=[VersionPsiResult(version="v1", psi=0.1, n=30)],
+            version_psi_results=[
+                VersionPsiResult(version="v1", psi=0.1, n=30, model_stage="Production")
+            ],
         )
         emitter.emit(metrics, annotated_count=0, version_psi_results=[])
 
         output = emitter.generate_metrics()[0].decode()
-        assert 'drift_psi_class_distribution{model_version="v1"}' not in output
-        assert 'drift_window_version_sample_count{model_version="v1"}' not in output
+        assert 'model_version="v1"' not in output
+
+
+# ── Stage resolution ──────────────────────────────────────────────────────────
+
+
+class TestStageResolution:
+    def test_stage_label_set_to_production_when_resolved(self):
+        """Version matching the Production registry entry gets model_stage='Production'."""
+        records = [_make_record(model_version="v1") for _ in range(30)]
+        data = FakeDriftDataController(records=records)
+        store = FakeModelStore(stage_versions={"Production": "v1"})
+        poller, em = _make_poller(data=data, store=store)
+        poller.poll()
+        _, _, version_psi_results = em.emitted[0]
+        assert version_psi_results[0].model_stage == "Production"
+
+    def test_stage_label_defaults_to_unknown_when_resolution_fails(self):
+        """Version with no registry entry gets model_stage='unknown'."""
+        records = [_make_record(model_version="v1") for _ in range(30)]
+        data = FakeDriftDataController(records=records)
+        store = FakeModelStore()  # no stage_versions → all stage lookups raise
+        poller, em = _make_poller(data=data, store=store)
+        poller.poll()
+        _, _, version_psi_results = em.emitted[0]
+        assert version_psi_results[0].model_stage == "unknown"
+
+    def test_canary_stage_assigned_correctly(self):
+        """When two versions are active, each gets the correct stage label."""
+        records_v1 = [_make_record(model_version="v1") for _ in range(30)]
+        records_v2 = [_make_record(model_version="v2") for _ in range(30)]
+        data = FakeDriftDataController(records=records_v1 + records_v2)
+        store = FakeModelStore(stage_versions={"Production": "v1", "Canary": "v2"})
+        poller, em = _make_poller(data=data, store=store)
+        poller.poll()
+        _, _, version_psi_results = em.emitted[0]
+        by_version = {vr.version: vr.model_stage for vr in version_psi_results}
+        assert by_version["v1"] == "Production"
+        assert by_version["v2"] == "Canary"
+
+    def test_partial_stage_failure_does_not_block_other_stages(self):
+        """If one stage lookup fails, the other stage is still resolved."""
+        records_v1 = [_make_record(model_version="v1") for _ in range(30)]
+        records_v2 = [_make_record(model_version="v2") for _ in range(30)]
+        data = FakeDriftDataController(records=records_v1 + records_v2)
+        # Only Production is registered; Canary lookup will raise → v2 stays "unknown".
+        store = FakeModelStore(stage_versions={"Production": "v1"})
+        poller, em = _make_poller(data=data, store=store)
+        poller.poll()
+        _, _, version_psi_results = em.emitted[0]
+        by_version = {vr.version: vr.model_stage for vr in version_psi_results}
+        assert by_version["v1"] == "Production"
+        assert by_version["v2"] == "unknown"
+
+    def test_retained_absent_version_carries_resolved_stage(self):
+        """A version retained by TTL but absent from current window still gets its stage."""
+        records = [_make_record(model_version="v1") for _ in range(30)]
+        data = FakeDriftDataController(records=records)
+        store = FakeModelStore(stage_versions={"Production": "v1"})
+        poller, em = _make_poller(
+            config=_make_config(reference_cache_ttl_seconds=300),
+            data=data,
+            store=store,
+        )
+        poller.poll()
+        data.records = []
+        poller.poll()
+        _, _, version_psi_results = em.emitted[1]
+        assert version_psi_results[0].version == "v1"
+        assert version_psi_results[0].model_stage == "Production"

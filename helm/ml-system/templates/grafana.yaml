@@ -45,6 +45,10 @@ metadata:
   name: grafana-dashboards
   namespace: {{ .Values.global.namespace }}
 data:
+  ml_system_production.json: |
+{{ .Files.Get "files/dashboards/ml_system_production.json" | indent 4 }}
+  ml_system_canary.json: |
+{{ .Files.Get "files/dashboards/ml_system_canary.json" | indent 4 }}
   ml_system.json: |
 {{ .Files.Get "files/dashboards/ml_system.json" | indent 4 }}
 ---
